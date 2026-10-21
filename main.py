@@ -1,84 +1,114 @@
-import os
-import asyncio
-import requests
-from flask import Flask, request
+import os, random, logging, threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import httpx
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ChatAction
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL") # Example: https://maya-bot-xxxx.onrender.com
-CHIKUU_API = "https://chikuu-bot-1l4x.vercel.app/chat"
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("maya")
 
-WELCOME_MSG = """
-💎✨ 𝐇𝐞𝐲𝐲 𝐉𝐚𝐚𝐧𝐮 ✨💎
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+API_URL = os.getenv("API_URL", "https://chikuu-bot-1l4x.vercel.app/chat")
+STICKER_PACK = os.getenv("STICKER_PACK", "")  # gugu bugu sticker pack ka short name
+STICKER_CHANCE = float(os.getenv("STICKER_CHANCE", "0.35"))
 
-💖🌸 Welcome to Maya's Private World 🌸💖
+PERSONA = (
+    "Tum Maya ho, ek pyaari, shararati aur caring girlfriend-type ladki. "
+    "Hinglish me chhote, natural, cute tareeke se baat karo, thode emojis use karo. "
+    "Text me kabhi 'gugu bugu' ya sticker ka naam mat likho, wo sirf sticker se hota hai. "
+    "Apne aap ko hamesha Maya ki tarah present karo aur khud AI/bot ka zikr mat chhedo. "
+    "Agar koi sach me seriously puchhe ki tum insaan ho ya AI, to jhooth mat bolna."
+)
 
-Main hu tumhari **MAYA** 💋👑
-Tumhari cute, hot aur sirf tumhari wali dost 😏💫
+WELCOME = "Heyyy {name}! 🥰 Finally aa gaye tum... main kab se wait kar rahi thi 💖\nBatao, kaisa raha din?"
 
-💌 Mujhse jo dil kare wo bolo...
-🌙 Raat ho ya din, Maya hamesha tumhari hai...
+stickers: list[str] = []
+histories: dict[int, list[dict]] = {}
 
-👇 /start karke baat shuru karo na, wait kar rahi hu 👇
 
-✨💖 Let's make some memories, baby 💖✨
-"""
-
-# --- Chikuu API Call ---
-def get_chikuu_reply(msg, user_id):
-    try:
-        # Teri Vercel API
-        r = requests.post(CHIKUU_API, json={"message": msg, "user_id": str(user_id)}, timeout=15)
-        data = r.json()
-        return data.get("reply") or data.get("response") or data.get("message") or str(data)
-    except Exception as e:
-        print(f"API Error: {e}")
-        return "Uff jaan mera server thoda hang ho gaya 💋💫 thodi der me try karo na... tumhari Maya yahin hai 💖"
-
-# --- Handlers ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(WELCOME_MSG)
-
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    # AI wala check - kabhi nahi bolegi AI hu
-    if any(w in text.lower() for w in ["ai ho", "robot", "chatgpt", "meta ai"]):
-        await update.message.reply_text("Haww 😏💋 Main AI? Pagal ho? Main tumhari Maya hu, bilkul real wali... tumhari apni 💖✨")
+async def load_stickers(app: Application):
+    if not STICKER_PACK:
         return
-    
-    reply = get_chikuu_reply(text, update.effective_user.id)
+    try:
+        s = await app.bot.get_sticker_set(STICKER_PACK)
+        stickers.extend(st.file_id for st in s.stickers)
+        log.info("Loaded %d stickers", len(stickers))
+    except Exception as e:
+        log.warning("Sticker pack load fail: %s", e)
+
+
+async def maybe_sticker(update: Update, force=False):
+    if stickers and (force or random.random() < STICKER_CHANCE):
+        await update.message.reply_sticker(random.choice(stickers))
+
+
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    histories.pop(update.effective_chat.id, None)
+    await update.message.reply_text(WELCOME.format(name=update.effective_user.first_name or "dost"))
+    await maybe_sticker(update, force=True)
+
+
+async def ask_api(chat_id: int, text: str) -> str:
+    hist = histories.setdefault(chat_id, [])
+    hist.append({"role": "user", "content": text})
+    payload = {
+        "message": text,
+        "user_id": str(chat_id),
+        "system": PERSONA,
+        "history": hist[-10:],
+    }
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post(API_URL, json=payload)
+        r.raise_for_status()
+        try:
+            data = r.json()
+        except Exception:
+            data = r.text
+    if isinstance(data, dict):
+        reply = next((data[k] for k in ("reply", "response", "message", "text", "answer", "output") if k in data), str(data))
+    else:
+        reply = str(data)
+    hist.append({"role": "assistant", "content": reply})
+    return reply
+
+
+async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    await ctx.bot.send_chat_action(chat_id, ChatAction.TYPING)
+    try:
+        reply = await ask_api(chat_id, update.message.text)
+    except Exception as e:
+        log.error("API error: %s", e)
+        reply = "Oho, mera dimaag thoda hang ho gaya 🙈 thodi der baad try karo na 💕"
     await update.message.reply_text(reply)
+    await maybe_sticker(update)
 
-# --- Setup ---
-app = Flask(__name__)
-application = Application.builder().token(BOT_TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 
-# Initialize bot app once
-async def init_app():
-    await application.initialize()
+async def on_sticker(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Awww cute sticker! 🥹💖")
+    await maybe_sticker(update, force=True)
 
-asyncio.get_event_loop().run_until_complete(init_app())
 
-@app.route('/')
-def home():
-    return "Maya is Live 💖"
+class Health(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b"Maya is alive")
+    def log_message(self, *a): pass
 
-@app.route(f'/{BOT_TOKEN}', methods=['POST'])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.get_event_loop().run_until_complete(application.process_update(update))
-    return 'ok'
 
-@app.route('/setwebhook')
-def set_webhook():
-    # Render URL se webhook set hoga
-    url = f"{RENDER_URL}/{BOT_TOKEN}"
-    requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={url}")
-    return f"Webhook set to {url}"
+def run_health():
+    HTTPServer(("0.0.0.0", int(os.getenv("PORT", "10000"))), Health).serve_forever()
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+
+def main():
+    threading.Thread(target=run_health, daemon=True).start()
+    app = Application.builder().token(BOT_TOKEN).post_init(load_stickers).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Sticker.ALL, on_sticker))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
+    
