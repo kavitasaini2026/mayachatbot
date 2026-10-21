@@ -10,7 +10,7 @@ log = logging.getLogger("maya")
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 API_URL = os.getenv("API_URL", "https://chikuu-bot-1l4x.vercel.app/chat")
-STICKER_PACK = os.getenv("STICKER_PACK", "")  # gugu bugu sticker pack ka short name
+STICKER_PACK = os.getenv("STICKER_PACK", "")  # comma se alag: pack1,pack2,pack3
 STICKER_CHANCE = float(os.getenv("STICKER_CHANCE", "0.35"))
 
 PERSONA = (
@@ -28,14 +28,14 @@ histories: dict[int, list[dict]] = {}
 
 
 async def load_stickers(app: Application):
-    if not STICKER_PACK:
-        return
-    try:
-        s = await app.bot.get_sticker_set(STICKER_PACK)
-        stickers.extend(st.file_id for st in s.stickers)
-        log.info("Loaded %d stickers", len(stickers))
-    except Exception as e:
-        log.warning("Sticker pack load fail: %s", e)
+    for pack in [p.strip() for p in STICKER_PACK.split(",") if p.strip()]:
+        try:
+            s = await app.bot.get_sticker_set(pack)
+            stickers.extend(st.file_id for st in s.stickers)
+            log.info("Loaded pack %s", pack)
+        except Exception as e:
+            log.warning("Sticker pack %s load fail: %s", pack, e)
+    log.info("Total stickers: %d", len(stickers))
 
 
 async def maybe_sticker(update: Update, force=False):
