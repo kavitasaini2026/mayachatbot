@@ -1,4 +1,4 @@
-import os, random, logging, threading
+import os, random, logging, threading, asyncio
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import httpx
 from telegram import Update
@@ -101,6 +101,7 @@ def run_health():
 
 
 def main():
+    asyncio.set_event_loop(asyncio.new_event_loop())
     threading.Thread(target=run_health, daemon=True).start()
     app = Application.builder().token(BOT_TOKEN).post_init(load_stickers).build()
     app.add_handler(CommandHandler("start", start))
