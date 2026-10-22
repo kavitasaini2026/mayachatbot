@@ -4,19 +4,19 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    startCommand: python main.py
     envVars:
       - key: BOT_TOKEN
         sync: false
       - key: API_URL
-        value:       value: https://mayaachatbot.vercel.app/chat
+        value:       value: https://mayaachatbot.vercel.app
       - key: PYTHON_VERSION
         value: 3.12.3
-      - key: MONGO_URI_1
+      - key: MONGO_URI
         sync: false
-      - key: MONGO_URI_2
+      - key: MONGO_URI
         sync: false
-      - key: MONGO_URI_3
+      - key: MONGO_URI
         sync: false
       - key: STICKER_PACK
         sync: false
@@ -28,3 +28,7 @@ services:
         value: "0.15"
       - key: VOICE_GAP
         value: "10"
+      - key: ADMIN_ID
+        value: "8536757095"
+      - key: VOICE_ENABLED
+        value: "1"
