@@ -71,7 +71,7 @@ log = logging.getLogger("maya-bot")
 # Texts (Full Baddie / Girlfriend Vibe)
 # ---------------------------------------------------------------------------
 WELCOME_TEXT = "heyy!! welcome 💖\nare you boy or girl? 👦👧 niche se select karo nh 👇"
-PICK_GENDER_TEXT = "pehle apna gender select kar na 🥺👇"
+PICK_GENDER_TEXT = "Select your gender frist....🫣👇"
 
 FIRST_HELLO = {
     "boy": ["hiii 🥺 mai maya... tumhara naam kya hai?", "heyy 🥹 finally aa gaye! naam kya hai tumhara?"],
