@@ -71,7 +71,7 @@ log = logging.getLogger("maya-bot")
 # Texts (Full Baddie / Girlfriend Vibe)
 # ---------------------------------------------------------------------------
 WELCOME_TEXT = "heyy!! welcome 💖\nare you boy or girl? 👦👧 niche se select karo nh 👇"
-PICK_GENDER_TEXT = "Select your gender frist....🫣👇"
+PICK_GENDER_TEXT = "pehle apna gender select kar na 🥺👇"
 
 FIRST_HELLO = {
     "boy": ["hiii 🥺 mai maya... tumhara naam kya hai?", "heyy 🥹 finally aa gaye! naam kya hai tumhara?"],
@@ -155,7 +155,7 @@ TRAPS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Detectors & Name Extractors
+# Detectors & Strict Name Extractors
 # ---------------------------------------------------------------------------
 AI_QUESTION_RE = re.compile(
     r"(\b(tu|tum|tm|aap|you|u|r u|are you|are u)\s+(ek\s+|a\s+|an\s+)?"
@@ -198,32 +198,33 @@ NAME_SAVED = [
     "ohh {n} 😍 yaad rakh liya maine, bhoolungi nahi 🫶🏻",
     "{n} hmm... theek hai pasand aaya sale 😏💖",
 ]
+
+# Expanded stopwords to prevent casual words like "ky", "hello", etc. from being saved as names
 NAME_STOPWORDS = {
     "hi", "hii", "hiii", "hello", "hey", "heyy", "haan", "han", "ha", "nahi", "nhi", "no", "yes", "ok",
-    "okay", "kya", "kuch", "bol", "bata", "batao", "btao", "tum", "tu", "aap", "mai", "main", "me", "mera",
-    "meri", "naam", "name", "bhai", "didi", "jaanu", "baby", "pata", "idk", "kaun", "kon", "kyu", "kyun",
-    "hmm", "hm", "acha", "accha", "thik", "theek", "fine", "good", "sad", "happy", "bore", "busy", "bas",
-    "sona", "babu", "jan", "tera", "teri", "tumhara", "tumhari", "pehle", "abhi", "wapas",
+    "okay", "kya", "ky", "kyu", "kyun", "kuch", "bol", "bata", "batao", "btao", "tum", "tu", "aap", "mai",
+    "main", "me", "mera", "meri", "naam", "name", "bhai", "didi", "jaanu", "baby", "pata", "idk", "kaun",
+    "kon", "hmm", "hm", "acha", "accha", "thik", "theek", "fine", "good", "sad", "happy", "bore", "busy",
+    "bas", "sona", "babu", "jan", "tera", "teri", "tumhara", "tumhari", "pehle", "abhi", "wapas", "kya hai",
 }
-_NAME_OK = re.compile(r"^[^\W\d_]+(?:[ '.-][^\W\d_]+)?$", re.UNICODE)
+
+_NAME_OK = re.compile(r"^[^\W\d_]{2,15}$", re.UNICODE)  # strict single-word check (2-15 letters)
 _EXPLICIT_NAME_PATTERNS = [
-    re.compile(r"^(?:mera|meri)\s+(?:naam|name|nam)\s+(?:hai\s+)?(.+?)(?:\s+(?:hai|h|he|hain))?$", re.I),
-    re.compile(r"^(?:my\s+name\s+is|my\s+name's|call\s+me|name\s+is)\s+(.+)$", re.I),
-    re.compile(r"^(?:naam|name)\s+(?:hai\s+)?(.+?)(?:\s+(?:hai|h))?$", re.I),
-    re.compile(r"^(.+?)\s+(?:naam\s+hai\s+mera|hai\s+mera\s+naam)$", re.I),
+    re.compile(r"^(?:mera|meri)\s+(?:naam|name|nam)\s+(?:hai\s+)?([^\W\d_]{2,15})$", re.I),
+    re.compile(r"^(?:my\s+name\s+is|my\s+name's|call\s+me|name\s+is)\s+([^\W\d_]{2,15})$", re.I),
+    re.compile(r"^(?:naam|name)\s+(?:hai\s+)?([^\W\d_]{2,15})$", re.I),
 ]
 _LOOSE_NAME_PATTERNS = [
-    re.compile(r"^(?:i\s*am|i'm|im|main|mai|mein)\s+(.+?)(?:\s+(?:hu|hoon|hun|h))?$", re.I),
-    re.compile(r"^(?:mera|meri)\s+(.+?)\s+(?:hai|h|he)$", re.I),
-    re.compile(r"^(.+?)\s+(?:hu|hoon|hun)$", re.I),
+    re.compile(r"^(?:i\s*am|i'm|im|main|mai|mein)\s+([^\W\d_]{2,15})$", re.I),
+    re.compile(r"^([^\W\d_]{2,15})\s+(?:hu|hoon|hun)$", re.I),
 ]
 
 
 def _valid_name(candidate: str) -> Optional[str]:
     c = candidate.strip(" .,!?~")
-    if not c or len(c) > 20 or not _NAME_OK.match(c):
+    if not c or len(c) < 2 or len(c) > 15 or not _NAME_OK.match(c):
         return None
-    if any(w in NAME_STOPWORDS for w in c.lower().split()):
+    if c.lower() in NAME_STOPWORDS:
         return None
     return c.title()
 
@@ -237,7 +238,10 @@ def extract_name(text: str, awaiting: bool = False) -> Optional[str]:
             name = _valid_name(m.group(1))
             if name:
                 return name
-    return _valid_name(t) if awaiting else None
+    # If awaiting explicitly, validate single clean word
+    if awaiting and len(t.split()) == 1:
+        return _valid_name(t)
+    return None
 
 
 SCHEMA = """
@@ -331,7 +335,7 @@ class DB:
                 "AND next_nudge_at <= ?",
                 (now,),
             ).fetchall()
-            """
+                """
 Maya Telegram bot - Part 2
 """
 def mongo_uris_from_env() -> list:
@@ -749,7 +753,7 @@ async def remember_name(app: Application, uid: int, name: str) -> None:
         if not await store.save(uid, {"chosen_name": name}):
             app.bot_data.setdefault("synced", set()).discard(uid)
             app.bot_data.setdefault("retry_at", {}).pop(uid, None)
-"""
+                """
 Maya Telegram bot - Part 3
 """
 async def process_message(app: Application, chat_id: int, uid: int, text: str) -> None:
@@ -757,8 +761,13 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str) -
     http: httpx.AsyncClient = app.bot_data["http"]
     row = db.get_user(uid)
     gender = row["gender"]
-    now = time.time()
+    
+    # Strict Check: If gender is not selected, block normal chat and force gender selection
+    if not gender:
+        await app.bot.send_message(chat_id, PICK_GENDER_TEXT, reply_markup=gender_keyboard())
+        return
 
+    now = time.time()
     prev_bot_ts = row["last_bot_ts"]
     msg_count = row["msg_count"] + 1
     trap_next_at = row["trap_next_at"] or (msg_count + random.randint(5, 6))
@@ -976,6 +985,9 @@ async def scan_nudges(app: Application, now: Optional[float] = None) -> None:
     now = now if now is not None else time.time()
     for row in db.due_nudges(now):
         uid = row["user_id"]
+        # Skip if gender is not selected yet
+        if not row["gender"]:
+            continue
         gender = row["gender"] or "boy"
         hour = datetime.fromtimestamp(now, IST).hour
         if QUIET_START_HOUR <= hour < QUIET_END_HOUR:
