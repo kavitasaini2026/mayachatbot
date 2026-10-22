@@ -283,7 +283,7 @@ class ProfileStore:
         except Exception as exc:
             log.error("Failed to fetch stickers from Mongo: %s", exc)
             return {}
-                """
+"""
 MAYA Telegram Bot - Part 2: Helpers, Voice Engine & Chat Processor
 """
 def _ffmpeg_exe() -> Optional[str]:
