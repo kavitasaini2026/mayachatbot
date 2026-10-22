@@ -1,508 +1,453 @@
-"""
-Maya Telegram Bot - Part 1
-Master Admin ID: 8536757095
-"""
-
-import asyncio
-import logging
-import os
-import random
-import re
-import sqlite3
-import threading
-import time
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-
-import httpx
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ChatType
-from telegram.error import BadRequest
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-API_URL = os.environ.get("API_URL", "https://mayaachatbot.vercel.app").rstrip("/")
-DB_PATH = os.environ.get("DB_PATH", "maya.db")
-
-ADMIN_ID = 8536757095
-IST = timezone(timedelta(hours=5, minutes=30))
-HISTORY_FOR_API = 15
-
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
-)
-log = logging.getLogger("maya-bot")
-
-# Fancy Font Converter (Dαιʟყ Bσηυѕ Style)
-NORMAL_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-FANCY_CHARS  = "αвc∂єƒgнιנкℓмησρqяѕтυνωxуzAвCDEFGHIJкLMNσPQRѕTUνWXуZ"
-FONT_MAP = str.maketrans(NORMAL_CHARS, FANCY_CHARS)
-
-def to_fancy_font(text: str) -> str:
-    return text.translate(FONT_MAP)
-
-WELCOME_TEXT = "heyy!! welcome 🥰\nare you boy or girl? 👦👧 niche se select karo na 🌚👇"
-
-HELP_TEXT = (
-    "✨ <b>Maya Bot Commands Guide</b> ✨\n\n"
-    "• /start - Bot start karein\n"
-    "• /profile - Apni profile aur Maya ke saath bond dekhein\n"
-    "• /mood - Maya ka current mood check karein\n"
-    "• /feedback <msg> - Admin ko feedback/report bhejein\n"
-    "• /reset - Chat history fresh karein\n"
-    "• /help - Ye help menu dekhein"
-)
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    gender TEXT,
-    msg_count INTEGER NOT NULL DEFAULT 0,
-    last_user_ts REAL,
-    last_bot_ts REAL,
-    affection_score INTEGER NOT NULL DEFAULT 50,
-    bot_nickname TEXT,
-    is_banned INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    role TEXT NOT NULL,
-    text TEXT NOT NULL,
-    ts REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-"""
-
-class DB:
-    def __init__(self, path: str):
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.lock = threading.Lock()
-        with self.lock:
-            self.conn.executescript(SCHEMA)
-            self.conn.commit()
-
-    def get_user(self, uid: int) -> sqlite3.Row:
-        with self.lock:
-            row = self.conn.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
-            if row is None:
-                nickname = random.choice(["Motu", "Chikni", "Pagal", "Jaanu", "Kamini", "Sali"])
-                self.conn.execute("INSERT INTO users (user_id, bot_nickname) VALUES (?, ?)", (uid, nickname))
-                self.conn.commit()
-                row = self.conn.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
-            return row
-
-    def update(self, uid: int, **fields) -> None:
-        if not fields:
+async def clear_chat_history(self, chat_id: int):
+        if not self.chats_cols:
             return
-        sets = ", ".join(f"{k}=?" for k in fields)
-        with self.lock:
-            self.conn.execute(f"UPDATE users SET {sets} WHERE user_id=?", (*fields.values(), uid))
-            self.conn.commit()
+        try:
+            await self.chats_cols[0].update_one({"_id": str(chat_id)}, {"$set": {"messages": []}})
+        except Exception as exc:
+            log.error("Mongo chat clear failed for %s: %s", chat_id, exc)
 
-    def add_message(self, uid: int, role: str, text: str) -> None:
-        with self.lock:
-            self.conn.execute(
-                "INSERT INTO messages (user_id, role, text, ts) VALUES (?, ?, ?, ?)",
-                (uid, role, text, time.time()),
+    async def add_custom_sticker(self, mood: str, file_id: str) -> bool:
+        if not self.clients:
+            return False
+        try:
+            stickers_col = self.clients[0][MONGO_DB_NAME]["custom_stickers"]
+            await stickers_col.update_one(
+                {"_id": mood.lower()},
+                {"$addToSet": {"file_ids": file_id}},
+                upsert=True
             )
-            self.conn.commit()
+            return True
+        except Exception as exc:
+            log.error("Failed to add sticker to Mongo: %s", exc)
+            return False
 
-    def history(self, uid: int, n: int = HISTORY_FOR_API) -> list:
-        with self.lock:
-            rows = self.conn.execute(
-                "SELECT role, text FROM messages WHERE user_id=? ORDER BY id DESC LIMIT ?",
-                (uid, n),
-            ).fetchall()
-        return [{"role": r["role"], "text": r["text"]} for r in reversed(rows)]
+    async def get_all_custom_stickers(self) -> dict:
+        if not self.clients:
+            return {}
+        try:
+            stickers_col = self.clients[0][MONGO_DB_NAME]["custom_stickers"]
+            cursor = stickers_col.find({})
+            result = {}
+            async for doc in cursor:
+                result[doc["_id"]] = doc.get("file_ids", [])
+            return result
+        except Exception as exc:
+            log.error("Failed to fetch stickers from Mongo: %s", exc)
+            return {}
+"""
+MAYA Telegram Bot - Part 2: Voice, API & Chat Processor
+"""
 
-    def clear_history(self, uid: int) -> None:
-        with self.lock:
-            self.conn.execute("DELETE FROM messages WHERE user_id=?", (uid,))
-            self.conn.commit()
-
-    def count_users(self) -> int:
-        with self.lock:
-            return self.conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-
-    def get_all_user_ids(self) -> list:
-        with self.lock:
-            rows = self.conn.execute("SELECT user_id FROM users").fetchall()
-            return [r["user_id"] for r in rows]
-
-    def count_messages(self) -> int:
-        with self.lock:
-            return self.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-
-    def get_setting(self, key: str, default: str = "0") -> str:
-        with self.lock:
-            row = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-            return row["value"] if row else default
-
-    def set_setting(self, key: str, value: str) -> None:
-        with self.lock:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
-            )
-            self.conn.commit()
-            # --- PART 2 ---
-
-def gender_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Boy 👦", callback_data="g:boy"),
-                InlineKeyboardButton("Girl 👧", callback_data="g:girl"),
-            ]
-        ]
-    )
-
-
-def build_context(
-    msg_count: int,
-    gender: str = "boy",
-    is_photo: bool = False,
-    is_group: bool = False,
-) -> str:
-    dt = datetime.fromtimestamp(time.time(), IST)
-    
-    if is_group:
-        type_rule = (
-            "ENVIRONMENT: PUBLIC TELEGRAM GROUP CHAT.\n"
-            "GENDER-NEUTRAL FLIRTING RULE: Speak in 100% gender-neutral Hinglish ('kahan the yrr', 'arey suno na', 'aag laga di 🌚', 'bestie', 'bro'). "
-            "Flirt, tease, hype, and joke with everyone in the group playfully without specifying male/female grammar!"
-        )
-    else:
-        type_rule = f"STRICT USER GENDER: {gender.upper()}. Be ultra-flirty, cute, teasing, and playful!"
-
-    photo_rule = "PHOTO FLIRTING RULE: User sent a photo/selfie. Hype them up, flirt, and tease them dynamically! 🌚😍" if is_photo else ""
-
-    return "\n".join([
-        f"Time: {dt.strftime('%I:%M %p')}.",
-        type_rule,
-        photo_rule,
-        "EMOJI STRICT RULE: DO NOT USE 🥺 EMOJI. Use: 💅🏼 😒 😋 🌚 😥 🤧 😗 🙂 🌝 😳 👀 🙄 🤣 😭 😑 😐 😍 😁 🥰",
-        "PERSONA: Maya - Cheeky, flirty Gen-Z girl. Keep replies short, super engaging, witty, and playful!"
-    ])
-
-
-async def say_parts(app: Application, chat_id: int, parts: list, reply_to_id: Optional[int] = None) -> None:
-    db: DB = app.bot_data["db"]
-    is_fancy = db.get_setting("fancy_font", "0") == "1"
-
-    for i, text in enumerate(parts):
-        final_text = to_fancy_font(text) if is_fancy else text
-        
-        if i == 0 and reply_to_id:
-            await app.bot.send_message(chat_id, final_text, reply_to_message_id=reply_to_id)
-        else:
-            await app.bot.send_message(chat_id, final_text)
-
-
-async def process_user_input(
-    app: Application, chat_id: int, uid: int, text: str, is_photo: bool = False, is_group: bool = False, msg_id: Optional[int] = None
-) -> None:
-    db: DB = app.bot_data["db"]
-    http: httpx.AsyncClient = app.bot_data["http"]
-    
-    row = db.get_user(uid)
-    if row["is_banned"] == 1:
-        if not is_group:
-            await app.bot.send_message(chat_id, "🚫 You are banned from using Maya.")
-        return
-
-    gender = row["gender"] or "boy"
-    db.update(uid, msg_count=row["msg_count"] + 1)
-
-    context_text = build_context(row["msg_count"], gender=gender, is_photo=is_photo, is_group=is_group)
-    payload = {
-        "message": text if text else "Photo reaction",
-        "user_id": str(uid),
-        "gender": gender,
-        "context": context_text,
-        "history": db.history(uid) if not is_group else [],
-    }
-
+# ---------------------------------------------------------------------------
+# Helpers & Voice Engine
+# ---------------------------------------------------------------------------
+def _ffmpeg_exe() -> Optional[str]:
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
     try:
-        r = await http.post(f"{API_URL}/chat", json=payload, timeout=60)
-        data = r.json()
-        parts = data.get("messages") or [data.get("reply", "haan bolo? 👀")]
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
-        parts = ["haan bolo? 🌚", "kya chal raha hai? ✨"]
+        return None
 
-    if not is_group:
-        db.add_message(uid, "user", text if text else "[Photo]")
-        db.add_message(uid, "model", " ".join(parts))
-
-    await say_parts(app, chat_id, parts, reply_to_id=msg_id if is_group else None)
-
-
-async def handle_incoming_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg, user, chat = update.effective_message, update.effective_user, update.effective_chat
-    if not msg or not user or not chat:
-        return
-
-    is_group = chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
-    text = msg.text or msg.caption or ""
-    bot_username = (context.bot.username or "").lower()
-
-    if is_group:
-        is_mentioned = bot_username and f"@{bot_username}" in text.lower()
-        is_name_called = bool(re.search(r"\bmaya\b", text, re.IGNORECASE))
-        is_reply_to_bot = bool(
-            msg.reply_to_message
-            and msg.reply_to_message.from_user
-            and msg.reply_to_message.from_user.id == context.bot.id
-        )
-
-        if not (is_mentioned or is_name_called or is_reply_to_bot):
-            return
-
-        clean_text = re.sub(rf"@{bot_username}", "", text, flags=re.IGNORECASE) if bot_username else text
-        await process_user_input(
-            context.application, chat.id, user.id, clean_text.strip(), is_photo=bool(msg.photo), is_group=True, msg_id=msg.message_id
-        )
-    else:
-        db: DB = context.application.bot_data["db"]
-        row = db.get_user(user.id)
-        
-        if not row["gender"] and not text.startswith("/"):
-            await msg.reply_text(WELCOME_TEXT, reply_markup=gender_keyboard())
-            return
-
-        await process_user_input(
-            context.application, chat.id, user.id, text, is_photo=bool(msg.photo), is_group=False
-            )
-        # --- PART 3 ---
-
-async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    q = update.callback_query
-    if not q or not q.data:
-        return
-    app = context.application
-    db: DB = app.bot_data["db"]
-    uid = q.from_user.id
-    row = db.get_user(uid)
-
-    if row["gender"]:
-        try:
-            await q.edit_message_text(text=f"Aapka gender pehle se saved hai: {row['gender'].upper()} ✨")
-        except BadRequest:
-            pass
-        await q.answer()
-        return
-
-    data = q.data
-    if data in ("g:boy", "g:girl"):
-        gender = "boy" if data == "g:boy" else "girl"
-        db.update(uid, gender=gender)
-        try:
-            await q.edit_message_text(text=f"Confirmed: {gender.upper()} 👦👧\n✨ Profile updated!")
-        except BadRequest:
-            pass
-
-        chat_id = q.message.chat_id if q.message else uid
-        hello = "hiii 🌚 mai maya... bolo kya chal raha hai?" if gender == "boy" else "heyyy chikni 💖 kya chal raha hai?"
-        db.add_message(uid, "model", hello)
-        await say_parts(app, chat_id, [hello])
-
-
-def is_admin(uid: int) -> bool:
-    return uid == ADMIN_ID
-
-
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user or not is_admin(user.id):
-        return
-    db: DB = context.application.bot_data["db"]
-    font_status = "ON ✨" if db.get_setting("fancy_font", "0") == "1" else "OFF 📝"
-
-    panel = (
-        "<b>👑 MAYA BOT MASTER ADMIN DASHBOARD</b>\n\n"
-        f"• <code>/togglefont</code> : Fancy Font (Current: {font_status})\n"
-        "• <code>/stats</code> : Live system stats\n"
-        "• <code>/broadcast &lt;msg&gt;</code> : Broadcast to Users\n"
-        "• <code>/broadcast &lt;group_id&gt; &lt;msg&gt;</code> : Broadcast to Group\n"
+async def audio_to_ogg_opus(wav: bytes) -> bytes:
+    exe = _ffmpeg_exe()
+    if not exe:
+        raise RuntimeError("ffmpeg not found")
+    proc = await asyncio.create_subprocess_exec(
+        exe, "-hide_banner", "-loglevel", "error", "-y", "-i", "pipe:0",
+        "-c:a", "libopus", "-b:a", "32k", "-ar", "48000", "-ac", "1", "-f", "ogg", "pipe:1",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    await update.effective_message.reply_html(panel)
+    out, err = await proc.communicate(wav)
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"ffmpeg failed: {err.decode('ignore')}")
+    return out
 
+async def edge_speech(text: str) -> bytes:
+    import edge_tts
+    spoken = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF]", "", text).replace("*", "").strip()
+    if not spoken:
+        raise RuntimeError("empty spoken text")
+    audio = bytearray()
+    async for chunk in edge_tts.Communicate(spoken, VOICE_NAME).stream():
+        if chunk["type"] == "audio":
+            audio.extend(chunk["data"])
+    return bytes(audio)
 
-async def admin_toggle_font(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user or not is_admin(user.id):
-        return
-    db: DB = context.application.bot_data["db"]
-    current = db.get_setting("fancy_font", "0")
-    new_val = "1" if current == "0" else "0"
-    db.set_setting("fancy_font", new_val)
-    await update.effective_message.reply_text(f"Fancy Font: {'ENABLED ✨' if new_val == '1' else 'DISABLED 📝'}")
-
-
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user or not is_admin(user.id):
-        return
-    db: DB = context.application.bot_data["db"]
-    stats_text = (
-        f"<b>📊 SYSTEM STATS</b>\n\n"
-        f"👥 Total Users: <code>{db.count_users()}</code>\n"
-        f"💬 Messages Logged: <code>{db.count_messages()}</code>\n"
-    )
-    await update.effective_message.reply_html(stats_text)
-
-
-async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user or not is_admin(user.id):
-        return
-    args = context.args
-    if not args:
-        await update.effective_message.reply_text("Usage: /broadcast <msg> OR /broadcast <group_id> <msg>")
-        return
-
-    db: DB = context.application.bot_data["db"]
-    if args[0].startswith("-100") or (args[0].startswith("-") and args[0][1:].isdigit()):
+async def say_split(app: Application, chat_id: int, full_text: str, is_voice: bool = False) -> None:
+    full_text = sanitize_emojis(full_text)
+    parts = [p.strip() for p in full_text.split("||") if p.strip()]
+    for i, part in enumerate(parts):
+        if i > 0:
+            await asyncio.sleep(random.uniform(0.8, 1.5))
         try:
-            await context.application.bot.send_message(args[0], f"📢 <b>Announcement:</b>\n\n{' '.join(args[1:])}", parse_mode="HTML")
-            await update.effective_message.reply_text("✅ Group Broadcast Sent!")
-        except Exception as e:
-            await update.effective_message.reply_text(f"❌ Error: {e}")
-        return
-
-    msg_text = " ".join(args)
-    sent = 0
-    for uid in db.get_all_user_ids():
-        try:
-            await context.application.bot.send_message(uid, f"📢 <b>Announcement:</b>\n\n{msg_text}", parse_mode="HTML")
-            sent += 1
-            await asyncio.sleep(0.04)
+            await app.bot.send_chat_action(chat_id, ChatAction.TYPING)
         except Exception:
             pass
-    await update.effective_message.reply_text(f"✅ Sent to {sent} users!")
+        await asyncio.sleep(min(0.4 + len(part) * 0.02, 2.5))
+        
+        if is_voice and i == 0:
+            try:
+                raw_mp3 = await edge_speech(part)
+                ogg = await audio_to_ogg_opus(raw_mp3)
+                await app.bot.send_voice(chat_id, ogg)
+                continue
+            except Exception as exc:
+                log.error("Voice synthesis failed: %s", exc)
+        
+        await app.bot.send_message(chat_id, part)
 
+# ---------------------------------------------------------------------------
+# API Interfacer
+# ---------------------------------------------------------------------------
+async def call_api(http: httpx.AsyncClient, payload: dict) -> str:
+    for attempt in range(2):
+        try:
+            r = await http.post(f"{API_URL}/chat", json=payload, timeout=45)
+            data = r.json()
+            if r.status_code == 200 and data.get("reply"):
+                return data["reply"]
+        except Exception as exc:
+            log.warning("API attempt %s failed: %s", attempt + 1, exc)
+            await asyncio.sleep(1.0)
+    return random.choice(API_FALLBACK_EXCUSES)
 
-async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user, msg, chat = update.effective_user, update.effective_message, update.effective_chat
-    if not user or not msg:
+# ---------------------------------------------------------------------------
+# Core Chat Processing
+# ---------------------------------------------------------------------------
+async def process_chat(app: Application, update: Update, text: str, is_group: bool = False) -> None:
+    db: DB = app.bot_data["db"]
+    store: ProfileStore = app.bot_data["profiles"]
+    http: httpx.AsyncClient = app.bot_data["http"]
+    
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    uid = user.id
+    
+    row = db.get_user(uid, user.first_name)
+    if row["is_banned"]:
         return
-    if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-        await msg.reply_text("heyy guys! 👋 Maya is active here! Just tag me or reply to my message to chat 💖")
+
+    now = time.time()
+    msg_count = row["msg_count"] + 1
+    db.update(uid, msg_count=msg_count)
+
+    # 1. Private Chat Onboarding Check
+    if not is_group:
+        if is_ai_question(text):
+            reply = random.choice(["abe haan yrr AI hu mai 😭 itna shock kyu ho raha hai", "wtf haan AI hu mai 💖 real insaan nahi hu fr"])
+            await store.push_chat_message(uid, "user", text, is_group=False)
+            await store.push_chat_message(uid, "model", reply, is_group=False)
+            await say_split(app, chat_id, reply)
+            return
+
+        if not row["chosen_name"]:
+            new_name = extract_name(text)
+            if new_name:
+                db.update(uid, chosen_name=new_name)
+                await store.save_profile(uid, {"chosen_name": new_name})
+                reply = random.choice(NAME_SAVED).format(n=new_name)
+                await store.push_chat_message(uid, "user", text, is_group=False)
+                await store.push_chat_message(uid, "model", reply, is_group=False)
+                await say_split(app, chat_id, reply)
+                return
+
+    # 2. Build Prompt Context
+    current_mood = app.bot_data.get("current_mood", "flirty")
+    dt = datetime.fromtimestamp(now, IST)
+    
+    if is_group:
+        system_instruction = (
+            f"Current IST Time: {dt.strftime('%I:%M %p')}. Mood: {current_mood}.\n"
+            "YOU ARE IN A PUBLIC GROUP CHAT. Use STRICTLY 100% GENDER-NEUTRAL Hinglish.\n"
+            "NEVER use gendered verb endings like 'raha hai', 'rahi hai', 'gaya tha', 'gayi thi', 'chikni', 'hero'.\n"
+            "Use neutral terms like: 'yrr', 'bro', 'bestie', 'pagal', 'kahan the', 'kya chal raha hai'."
+        )
+    else:
+        gender = row["gender"] or "boy"
+        gender_rules = "User is MALE. Use masculine terms like 'hero', 'chikne', 'tu kya kar raha hai'." if gender == "boy" else "User is FEMALE. Use feminine/bestie terms like 'chikni', 'patakha', 'tu kya kar rahi hai'."
+        system_instruction = (
+            f"Current IST Time: {dt.strftime('%I:%M %p')}. Mood: {current_mood}.\n"
+            f"Private 1-on-1 Chat. {gender_rules}\n"
+            f"User name: {row['chosen_name'] or row['name'] or 'friend'}.\n"
+            "Use split message delimiter '||' for two fast thoughts."
+        )
+
+    history = await store.get_chat_history(chat_id if is_group else uid)
+    
+    payload = {
+        "message": text,
+        "user_id": str(chat_id if is_group else uid),
+        "context": system_instruction,
+        "history": history
+    }
+
+    reply = await call_api(http, payload)
+    
+    target_id = chat_id if is_group else uid
+    await store.push_chat_message(target_id, "user", text, is_group=is_group)
+    await store.push_chat_message(target_id, "model", reply, is_group=is_group)
+
+    want_voice = VOICE_ENABLED and not is_group and len(reply) <= VOICE_MAX_CHARS and random.random() < VOICE_CHANCE
+    await say_split(app, chat_id, reply, is_voice=want_voice)
+Murari😌😌:
+"""
+MAYA Telegram Bot - Part 3: Admin, Handlers & Main App
+"""
+
+# ---------------------------------------------------------------------------
+# Admin Control Panel & Secure Commands
+# ---------------------------------------------------------------------------
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Stats", callback_data="adm:stats"), InlineKeyboardButton("📢 Broadcast", callback_data="adm:broadcast")],
+        [InlineKeyboardButton("🧠 Clear Memory", callback_data="adm:clear_mem"), InlineKeyboardButton("🖼️ View Stickers", callback_data="adm:view_stickers")],
+        [InlineKeyboardButton("📥 Export Data", callback_data="adm:export")]
+    ])
+    await update.message.reply_text("👑 *Maya Admin Control Center*", reply_markup=keyboard, parse_mode="Markdown")
+
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        return
+    await q.answer()
+    
+    action = q.data.split(":", 1)[1]
+    store: ProfileStore = context.application.bot_data["profiles"]
+    
+    if action == "stats":
+        cols_count = len(store.cols)
+        await q.edit_message_text(f"📊 *Maya Live System Stats*\n\nMongo Status: Connected ({cols_count} clusters)\nVoice Notes: {'ON' if VOICE_ENABLED else 'OFF'}", parse_mode="Markdown")
+    elif action == "export":
+        data = {"exported_at": time.time(), "status": "active"}
+        file_bytes = json.dumps(data, indent=2).encode()
+        await context.bot.send_document(q.from_user.id, document=file_bytes, filename="maya_database_export.json")
+        await q.edit_message_text("✅ Exported full backup to your DM.")
+    elif action == "view_stickers":
+        stickers_data = await store.get_all_custom_stickers()
+        if not stickers_data:
+            await q.edit_message_text("Abhi tak koi custom stickers add nahi kiye gaye hain.")
+            return
+        text = "🖼️ *Custom Sticker Collections*\n━━━━━━━━━━━━━━━━━━━\n"
+        for mood, ids in stickers_data.items():
+            text += f"• *{mood.title()}*: {len(ids)} stickers\n"
+        await q.edit_message_text(text, parse_mode="Markdown")
+
+async def admin_clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /clearchat <user_id_or_group_id>", parse_mode="Markdown")
+        return
+    target_id = context.args[0]
+    store: ProfileStore = context.application.bot_data["profiles"]
+    await store.clear_chat_history(target_id)
+    await update.message.reply_text(f"✅ Cleared MongoDB chat memory for {target_id}", parse_mode="Markdown")
+
+async def admin_add_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if not msg.reply_to_message or not (msg.reply_to_message.sticker or msg.reply_to_message.photo):
+        await msg.reply_text("⚠️ Kisi sticker ya image par reply karke command likho: /addsticker <mood>\n\nAllowed Moods: happy, angry, sleepy, sad, love", parse_mode="Markdown")
+        return
+
+    if not context.args:
+        await msg.reply_text("⚠️ Mood select karna zaroori hai! Example: /addsticker happy", parse_mode="Markdown")
+        return
+
+    mood = context.args[0].lower()
+    valid_moods = ["happy", "angry", "sleepy", "sad", "love"]
+    if mood not in valid_moods:
+        await msg.reply_text(f"❌ Invalid mood! Ye allowed hain: {', '.join(valid_moods)}")
+        return
+
+    target_msg = msg.reply_to_message
+    file_id = target_msg.sticker.file_id if target_msg.sticker else target_msg.photo[-1].file_id
+
+    store: ProfileStore = context.application.bot_data["profiles"]
+    success = await store.add_custom_sticker(mood, file_id)
+
+if success:
+        await msg.reply_text(f"✅ Sticker successfully added under {mood} mood!", parse_mode="Markdown")
+    else:
+        await msg.reply_text("❌ Database error! Sticker save nahi ho paya.")
+
+async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /broadcast <message text>", parse_mode="Markdown")
+        return
+    text = " ".join(context.args)
+    db: DB = context.application.bot_data["db"]
+    with db.lock:
+        rows = db.conn.execute("SELECT user_id FROM users WHERE is_banned=0").fetchall()
+    count = 0
+    for r in rows:
+        try:
+            await context.bot.send_message(r["user_id"], text)
+            count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+    await update.message.reply_text(f"✅ Broadcast sent successfully to {count} users!")
+
+# ---------------------------------------------------------------------------
+# Telegram Standard Handlers & Dynamic Help Menu
+# ---------------------------------------------------------------------------
+async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user, msg = update.effective_user, update.effective_message
+    if not user or not msg:
         return
     
     db: DB = context.application.bot_data["db"]
-    row = db.get_user(user.id)
+    store: ProfileStore = context.application.bot_data["profiles"]
+    
+    row = db.get_user(user.id, user.first_name)
+    prof, _ = await store.get_profile(user.id)
+    
+    if prof and prof.get("gender"):
+        db.update(user.id, gender=prof["gender"])
+        row = db.get_user(user.id)
+
+    if update.effective_chat.type != "private":
+        await msg.reply_text("Heyy everyone! Maya is here 💖 Mention me to chat!")
+        return
+
     if not row["gender"]:
-        await msg.reply_text(WELCOME_TEXT, reply_markup=gender_keyboard())
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Boy 👦", callback_data="g:boy"), InlineKeyboardButton("Girl 👧", callback_data="g:girl")]])
+        await msg.reply_text(WELCOME_TEXT, reply_markup=kb)
     else:
-        await msg.reply_text("heyy aa gaye fir se? 🌚 kya chal raha hai?")
-
-
-async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user:
-        return
-    db: DB = context.application.bot_data["db"]
-    row = db.get_user(user.id)
-    text = (
-        f"💖 <b>MAYA'S BOND PROFILE</b> 💖\n\n"
-        f"👤 User ID: <code>{user.id}</code>\n"
-        f"🏷️ Gender: <code>{(row['gender'] or 'Not Set').upper()}</code>\n"
-        f"💬 Messages: <code>{row['msg_count']}</code>\n"
-        f"💞 Affection: <code>{row['affection_score']}/100</code>\n"
-        f"🐾 Nickname: <b>{row['bot_nickname']}</b>"
-    )
-    await update.effective_message.reply_html(text)
-
-
-async def cmd_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user:
-        return
-    db: DB = context.application.bot_data["db"]
-    row = db.get_user(user.id)
-    score = row["affection_score"]
-    mood_desc = "Happy & Playful 🥰" if score > 50 else "Thoda gussa ya mood off 😒"
-    await update.effective_message.reply_text(f"Maya's Current Mood: {mood_desc}")
-
-
-async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user:
-        return
-    msg_text = " ".join(context.args)
-    if not msg_text:
-        await update.effective_message.reply_text("Usage: /feedback <message>")
-        return
-    try:
-        await context.application.bot.send_message(
-            ADMIN_ID, f"📩 <b>Feedback from {user.id}:</b>\n\n{msg_text}", parse_mode="HTML"
-        )
-        await update.effective_message.reply_text("✅ Feedback sent to admin!")
-    except Exception:
-        await update.effective_message.reply_text("❌ Error sending feedback.")
-
+        await msg.reply_text(random.choice(WELCOME_BACK[row["gender"]]))
 
 async def on_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message:
-        await update.effective_message.reply_html(HELP_TEXT)
+    user = update.effective_user
+    is_adm = (user.id == ADMIN_ID)
+    
+    text = "✨ *Maya Bot Help Menu* ✨\n\n"
+    text += "🌸 *User Commands:*\n"
+    text += "• /start - Bot start kare aur gender select kare.\n"
+    text += "• /help - Yeh help menu dekhe.\n"
+    text += "• /about - Maya ke baare me jaane.\n"
+    text += "• /reset - Apni personal chat history fresh kare.\n\n"
+    
+    if is_adm:
+        text += "👑 *Admin Commands (Only For You):*\n"
+        text += "• /admin - Admin control panel open kare.\n"
+        text += "• /clearchat <id> - Kisi specific user ya group ki MongoDB chat memory wipe kare.\n"
+        text += "• /addsticker <mood> - Kisi sticker/photo par reply karke usko mood (happy, angry, sleepy, sad, love) me save kare.\n"
+        text += "• /viewstickers - Saved custom stickers ki summary dekhe.\n"
+        text += "• /broadcast <msg> - Sabhi registered users ko ek sath notification/message bheje.\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
 
+async def on_about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message:
+        await update.effective_message.reply_text(ABOUT_TEXT)
 
 async def on_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user, msg = update.effective_user, update.effective_message
     if not user or not msg:
         return
-    db: DB = context.application.bot_data["db"]
-    db.clear_history(user.id)
-    await msg.reply_text("done 🥰 chat fresh kar di ✨")
+    store: ProfileStore = context.application.bot_data["profiles"]
+    await store.clear_chat_history(user.id)
+    await msg.reply_text("done 🥹 chat fresh kar di, ab nayi shuruaat ✨")
 
+async def on_gender_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    await q.answer()
+    
+    db: DB = context.application.bot_data["db"]
+    store: ProfileStore = context.application.bot_data["profiles"]
+    
+    gender = q.data.split(":")[1]
+    uid = q.from_user.id
+    
+    db.update(uid, gender=gender)
+    await store.save_profile(uid, {"gender": gender, "username": q.from_user.username, "name": q.from_user.first_name})
+    
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+        
+    hello = random.choice(FIRST_HELLO[gender])
+    await say_split(context.application, q.message.chat_id, hello)
+
+async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    if not msg or not msg.text:
+        return
+        
+    is_group = update.effective_chat.type in ["group", "supergroup"]
+    bot_username = context.bot.username
+    
+    if is_group:
+        is_mentioned = f"@{bot_username}" in msg.text
+        is_reply = msg.reply_to_message and msg.reply_to_message.from_user.id == context.bot.id
+        is_named = "maya" in msg.text.lower()
+        if not (is_mentioned or is_reply or is_named):
+            return
+
+    await process_chat(context.application, update, msg.text, is_group=is_group)
+
+# ---------------------------------------------------------------------------
+# Health Server & Application Lifecycle
+# ---------------------------------------------------------------------------
+async def health_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    body = b"Maya bot is active"
+    head = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body)
+    try:
+        writer.write(head + body)
+        await writer.drain()
+    except Exception:
+        pass
+    finally:
+        writer.close()
 
 async def post_init(app: Application) -> None:
     app.bot_data["db"] = DB(DB_PATH)
     app.bot_data["http"] = httpx.AsyncClient()
-
+    app.bot_data["profiles"] = ProfileStore(mongo_uris_from_env())
+    app.bot_data["current_mood"] = "flirty"
+    
+    port = os.environ.get("PORT")
+    if port:
+        app.bot_data["health_server"] = await asyncio.start_server(health_handler, "0.0.0.0", int(port))
+        log.info("Health server listening on port %s", port)
+    log.info("Maya Bot started successfully with Admin & Help configuration!")
 
 def build_app() -> Application:
     if not BOT_TOKEN:
-        raise SystemExit("BOT_TOKEN missing.")
-    
+        raise SystemExit("BOT_TOKEN is missing!")
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
-    app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(CommandHandler("stats", admin_stats))
-    app.add_handler(CommandHandler("togglefont", admin_toggle_font))
-    app.add_handler(CommandHandler("broadcast", admin_broadcast))
-
+    
+    # User Commands
     app.add_handler(CommandHandler("start", on_start))
-    app.add_handler(CommandHandler("reset", on_reset))
-    app.add_handler(CommandHandler("profile", cmd_profile))
-    app.add_handler(CommandHandler("mood", cmd_mood))
-    app.add_handler(CommandHandler("feedback", cmd_feedback))
     app.add_handler(CommandHandler("help", on_help))
-
-    app.add_handler(CallbackQueryHandler(on_gender, pattern=r"^g:(boy|girl)$"))
-
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_incoming_msg))
-
+    app.add_handler(CommandHandler("about", on_about))
+    app.add_handler(CommandHandler("reset", on_reset))
+    
+    # Admin Protected Commands
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("clearchat", admin_clear_chat))
+    app.add_handler(CommandHandler("addsticker", admin_add_sticker))
+    app.add_handler(CommandHandler("viewstickers", admin_view_stickers))
+    app.add_handler(CommandHandler("broadcast", admin_broadcast))
+    
+    # Callbacks & Messages
+    app.add_handler(CallbackQueryHandler(on_gender_select, pattern=r"^g:(boy|girl)$"))
+    app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^adm:"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    
     return app
 
-
-if __name__ == "__main__":
-    build_app().run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+if name == "main":
+    build_app().run_polling(allowed_updates=Update.ALL_TYPES)
