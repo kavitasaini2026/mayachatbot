@@ -9,7 +9,7 @@ services:
       - key: BOT_TOKEN
         sync: false
       - key: API_URL
-        value: https://chikuu-bot-yi71.vercel.app
+        value:       value: https://mayaachatbot.vercel.app/chat
       - key: PYTHON_VERSION
         value: 3.12.3
       - key: MONGO_URI_1
