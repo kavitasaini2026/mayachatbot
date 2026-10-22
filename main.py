@@ -1,5 +1,5 @@
 """
-Maya Telegram Bot - Part 1 (Config, Database & Fancy Font Engine)
+Maya Telegram Bot - Part 1
 Master Admin ID: 8536757095
 """
 
@@ -33,12 +33,10 @@ try:
 except ImportError:
     pass
 
-# Configs & Environment Setup
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 API_URL = os.environ.get("API_URL", "https://chikuu-bot-yi71.vercel.app").rstrip("/")
 DB_PATH = os.environ.get("DB_PATH", "maya.db")
 
-# MASTER BOT ADMIN ID (FULL CONTROL)
 ADMIN_ID = 8536757095
 IST = timezone(timedelta(hours=5, minutes=30))
 HISTORY_FOR_API = 15
@@ -48,7 +46,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("maya-bot")
 
-# Fancy Font Auto-Converter (Dαιʟყ Bσηυѕ Style)
+# Fancy Font Converter (Dαιʟყ Bσηυѕ Style)
 NORMAL_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 FANCY_CHARS  = "αвc∂єƒgнιנкℓмησρqяѕтυνωxуzAвCDEFGHIJкLMNσPQRѕTUνWXуZ"
 FONT_MAP = str.maketrans(NORMAL_CHARS, FANCY_CHARS)
@@ -153,18 +151,6 @@ class DB:
         with self.lock:
             return self.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 
-    def clear_user_completely(self, uid: int) -> None:
-        with self.lock:
-            self.conn.execute("DELETE FROM users WHERE user_id=?", (uid,))
-            self.conn.execute("DELETE FROM messages WHERE user_id=?", (uid,))
-            self.conn.commit()
-
-    def reset_all_data(self) -> None:
-        with self.lock:
-            self.conn.execute("DELETE FROM users")
-            self.conn.execute("DELETE FROM messages")
-            self.conn.commit()
-
     def get_setting(self, key: str, default: str = "0") -> str:
         with self.lock:
             row = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -175,9 +161,8 @@ class DB:
             self.conn.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
             )
-            self.conn.commit()"""
-Maya Telegram Bot - Part 2 (UI, Context Engine & Direct Reply Handler)
-"""
+            self.conn.commit()
+            # --- PART 2 ---
 
 def gender_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -186,19 +171,6 @@ def gender_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Boy 👦", callback_data="g:boy"),
                 InlineKeyboardButton("Girl 👧", callback_data="g:girl"),
             ]
-        ]
-    )
-
-
-def confirm_timer_keyboard(gender: str, seconds_left: int) -> InlineKeyboardMarkup:
-    if seconds_left > 0:
-        confirm_btn = InlineKeyboardButton(f"⏳ Wait ({seconds_left}s)", callback_data="g:wait")
-    else:
-        confirm_btn = InlineKeyboardButton("✅ Confirm", callback_data=f"g:confirm:{gender}")
-    return InlineKeyboardMarkup(
-        [
-            [confirm_btn],
-            [InlineKeyboardButton("⬅️ Back", callback_data="g:back")]
         ]
     )
 
@@ -238,7 +210,6 @@ async def say_parts(app: Application, chat_id: int, parts: list, reply_to_id: Op
     for i, text in enumerate(parts):
         final_text = to_fancy_font(text) if is_fancy else text
         
-        # Reply directly to the user's message in groups for the first message part
         if i == 0 and reply_to_id:
             await app.bot.send_message(chat_id, final_text, reply_to_message_id=reply_to_id)
         else:
@@ -293,7 +264,6 @@ async def handle_incoming_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
     bot_username = (context.bot.username or "").lower()
 
     if is_group:
-        # Check if Maya is mentioned, named, or replied to
         is_mentioned = bot_username and f"@{bot_username}" in text.lower()
         is_name_called = bool(re.search(r"\bmaya\b", text, re.IGNORECASE))
         is_reply_to_bot = bool(
@@ -302,7 +272,6 @@ async def handle_incoming_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
             and msg.reply_to_message.from_user.id == context.bot.id
         )
 
-        # Ignore if the message isn't directed at Maya
         if not (is_mentioned or is_name_called or is_reply_to_bot):
             return
 
@@ -311,7 +280,6 @@ async def handle_incoming_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.application, chat.id, user.id, clean_text.strip(), is_photo=bool(msg.photo), is_group=True, msg_id=msg.message_id
         )
     else:
-        # Private Chat Processing
         db: DB = context.application.bot_data["db"]
         row = db.get_user(user.id)
         
@@ -321,21 +289,8 @@ async def handle_incoming_msg(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await process_user_input(
             context.application, chat.id, user.id, text, is_photo=bool(msg.photo), is_group=False
-            )"""
-Maya Telegram Bot - Part 3 (Master Admin Controls, Commands & App Entrypoint)
-"""
-
-async def run_gender_timer(app: Application, chat_id: int, message_id: int, gender: str) -> None:
-    for s in range(5, -1, -1):
-        try:
-            kb = confirm_timer_keyboard(gender, s)
-            text = f"Selected: {gender.upper()} 👦👧\nConfirm button {s}s me enable hoga..." if s > 0 else f"Selected: {gender.upper()} 👦👧\nAb 'Confirm' daba ke lock karo! ✨"
-            await app.bot.edit_message_text(text=text, chat_id=chat_id, message_id=message_id, reply_markup=kb)
-        except BadRequest:
-            break
-        if s > 0:
-            await asyncio.sleep(1)
-
+            )
+        # --- PART 3 ---
 
 async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
@@ -355,30 +310,8 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     data = q.data
-
     if data in ("g:boy", "g:girl"):
-        selected_gender = "boy" if data == "g:boy" else "girl"
-        await q.answer()
-        asyncio.create_task(run_gender_timer(app, q.message.chat_id, q.message.message_id, selected_gender))
-        return
-
-    if data == "g:wait":
-        await q.answer(text="⏳ Wait karo, 5 second poore hone do!", show_alert=False)
-        return
-
-    if data == "g:back":
-        try:
-            await q.edit_message_text(text="Select again 👦👧", reply_markup=gender_keyboard())
-        except BadRequest:
-            pass
-        await q.answer()
-        return
-
-    if data.startswith("g:confirm:"):
-        gender = data.split(":", 2)[2]
-        if gender not in ("boy", "girl"):
-            return
-
+        gender = "boy" if data == "g:boy" else "girl"
         db.update(uid, gender=gender)
         try:
             await q.edit_message_text(text=f"Confirmed: {gender.upper()} 👦👧\n✨ Profile updated!")
@@ -390,8 +323,6 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.add_message(uid, "model", hello)
         await say_parts(app, chat_id, [hello])
 
-
-# --- BOT MASTER ADMIN PANEL (EXCLUSIVE TO ADMIN_ID = 8536757095) ---
 
 def is_admin(uid: int) -> bool:
     return uid == ADMIN_ID
@@ -408,13 +339,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "<b>👑 MAYA BOT MASTER ADMIN DASHBOARD</b>\n\n"
         f"• <code>/togglefont</code> : Fancy Font (Current: {font_status})\n"
         "• <code>/stats</code> : Live system stats\n"
-        "• <code>/userinfo &lt;uid&gt;</code> : Check user details\n"
-        "• <code>/ban &lt;uid&gt;</code> : Ban user from bot\n"
-        "• <code>/unban &lt;uid&gt;</code> : Unban user\n"
         "• <code>/broadcast &lt;msg&gt;</code> : Broadcast to Users\n"
         "• <code>/broadcast &lt;group_id&gt; &lt;msg&gt;</code> : Broadcast to Group\n"
-        "• <code>/cleardb &lt;uid&gt;</code> : Wipe user data\n"
-        "• <code>/resetall</code> : Wipe entire DB clean\n"
     )
     await update.effective_message.reply_html(panel)
 
@@ -472,8 +398,6 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             pass
     await update.effective_message.reply_text(f"✅ Sent to {sent} users!")
 
-
-# --- USER COMMANDS ---
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user, msg, chat = update.effective_user, update.effective_message, update.effective_chat
@@ -561,13 +485,11 @@ def build_app() -> Application:
     
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Master Admin Handlers
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("togglefont", admin_toggle_font))
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
 
-    # User Commands
     app.add_handler(CommandHandler("start", on_start))
     app.add_handler(CommandHandler("reset", on_reset))
     app.add_handler(CommandHandler("profile", cmd_profile))
@@ -575,10 +497,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("feedback", cmd_feedback))
     app.add_handler(CommandHandler("help", on_help))
 
-    # Inline Gender Handlers
-    app.add_handler(CallbackQueryHandler(on_gender, pattern=r"^g:(boy|girl|confirm:(boy|girl)|wait|back)$"))
+    app.add_handler(CallbackQueryHandler(on_gender, pattern=r"^g:(boy|girl)$"))
 
-    # Smart Message Listener (Private & Group Filtering)
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_incoming_msg))
 
     return app
