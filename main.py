@@ -93,8 +93,7 @@ API_FALLBACK_EXCUSES = [
     "Arey dost ki photo like kar rahi thi, miss ho gaya msg 💀",
     "Mera mobile heating issue de raha hai, wapis bol kya bola 😭",
     "Kahan chala gaya tha? Msg late aa raha hai tera 😒",
-
-"Abe padhai me busy thi yrr, kya bol raha tha? 😭",
+    "Abe padhai me busy thi yrr, kya bol raha tha? 😭",
     "Mera 90% data khatam ho gaya lagta hai, firse bhej 💀",
     "Tere msg me kuch glitch tha shayad, ek baar aur bhej na 💖",
     "Abe tune kya likha tha ye? Samajh hi nahi aaya 😒",
@@ -138,7 +137,7 @@ CREATE TABLE IF NOT EXISTS users (
 """
 
 class DB:
-    def init(self, path: str):
+    def __init__(self, path: str):
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.Lock()
@@ -172,7 +171,7 @@ def mongo_uris_from_env() -> list:
     return uris
 
 class ProfileStore:
-    def init(self, uris: Optional[list] = None):
+    def __init__(self, uris: Optional[list] = None):
         self.clients = []
         self.cols = []
         self.chats_cols = []
@@ -199,7 +198,7 @@ class ProfileStore:
                 pass
         return None, None
 
-async def save_profile(self, uid: int, fields: dict, home: Optional[int] = None) -> bool:
+    async def save_profile(self, uid: int, fields: dict, home: Optional[int] = None) -> bool:
         if not self.cols:
             return False
         idx = home if home is not None else 0
@@ -284,7 +283,7 @@ async def save_profile(self, uid: int, fields: dict, home: Optional[int] = None)
         except Exception as exc:
             log.error("Failed to fetch stickers from Mongo: %s", exc)
             return {}
-"""
+                """
 MAYA Telegram Bot - Part 2: Helpers, Voice Engine & Chat Processor
 """
 def _ffmpeg_exe() -> Optional[str]:
@@ -385,8 +384,7 @@ async def process_chat(app: Application, update: Update, text: str, is_group: bo
         if not row["chosen_name"]:
             new_name = extract_name(text)
             if new_name:
-
-db.update(uid, chosen_name=new_name)
+                db.update(uid, chosen_name=new_name)
                 await store.save_profile(uid, {"chosen_name": new_name})
                 reply = random.choice(NAME_SAVED).format(n=new_name)
                 await store.push_chat_message(uid, "user", text, is_group=False)
@@ -430,8 +428,8 @@ db.update(uid, chosen_name=new_name)
     await store.push_chat_message(target_id, "model", reply, is_group=is_group)
 
     want_voice = VOICE_ENABLED and not is_group and len(reply) <= VOICE_MAX_CHARS and random.random() < VOICE_CHANCE
-    await say_split(app, chat_id, reply, is_voice=want_voice)          
-"""
+    await say_split(app, chat_id, reply, is_voice=want_voice)
+    """
 MAYA Telegram Bot - Part 3: Admin Panel, Handlers & Main App Runner
 """
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -476,12 +474,12 @@ async def admin_clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if update.effective_user.id != ADMIN_ID:
         return
     if not context.args:
-        await update.message.reply_text("Usage: /clearchat <user_id_or_group_id>", parse_mode="Markdown")
+        await update.message.reply_text("Usage: `/clearchat <user_id_or_group_id>`", parse_mode="Markdown")
         return
     target_id = context.args[0]
     store: ProfileStore = context.application.bot_data["profiles"]
     await store.clear_chat_history(target_id)
-    await update.message.reply_text(f"✅ Cleared MongoDB chat memory for {target_id}", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Cleared MongoDB chat memory for `{target_id}`", parse_mode="Markdown")
 
 async def admin_add_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
@@ -489,11 +487,11 @@ async def admin_add_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if not msg.reply_to_message or not (msg.reply_to_message.sticker or msg.reply_to_message.photo):
-        await msg.reply_text("⚠️ Kisi sticker ya image par reply karke command likho: /addsticker <mood>\n\nAllowed Moods: happy, angry, sleepy, sad, love", parse_mode="Markdown")
+        await msg.reply_text("⚠️ Kisi sticker ya image par reply karke command likho: `/addsticker <mood>`\n\nAllowed Moods: `happy`, `angry`, `sleepy`, `sad`, `love`", parse_mode="Markdown")
         return
 
     if not context.args:
-        await msg.reply_text("⚠️ Mood select karna zaroori hai! Example: /addsticker happy", parse_mode="Markdown")
+        await msg.reply_text("⚠️ Mood select karna zaroori hai! Example: `/addsticker happy`", parse_mode="Markdown")
         return
 
     mood = context.args[0].lower()
@@ -509,7 +507,7 @@ async def admin_add_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     success = await store.add_custom_sticker(mood, file_id)
 
     if success:
-        await msg.reply_text(f"✅ Sticker successfully added under {mood} mood!", parse_mode="Markdown")
+        await msg.reply_text(f"✅ Sticker successfully added under `{mood}` mood!", parse_mode="Markdown")
     else:
         await msg.reply_text("❌ Database error! Sticker save nahi ho paya.")
 
@@ -517,7 +515,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if update.effective_user.id != ADMIN_ID:
         return
     if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message text>", parse_mode="Markdown")
+        await update.message.reply_text("Usage: `/broadcast <message text>`", parse_mode="Markdown")
         return
     text = " ".join(context.args)
     db: DB = context.application.bot_data["db"]
@@ -564,18 +562,18 @@ async def on_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     text = "✨ *Maya Bot Help Menu* ✨\n\n"
     text += "🌸 *User Commands:*\n"
-    text += "• /start - Bot start kare aur gender select kare.\n"
-    text += "• /help - Yeh help menu dekhe.\n"
-    text += "• /about - Maya ke baare me jaane.\n"
-    text += "• /reset - Apni personal chat history fresh kare.\n\n"
+    text += "• `/start` - Bot start kare aur gender select kare.\n"
+    text += "• `/help` - Yeh help menu dekhe.\n"
+    text += "• `/about` - Maya ke baare me jaane.\n"
+    text += "• `/reset` - Apni personal chat history fresh kare.\n\n"
     
     if is_adm:
         text += "👑 *Admin Commands (Only For You):*\n"
-        text += "• /admin - Admin control panel open kare.\n"
-        text += "• /clearchat <id> - Kisi specific user ya group ki MongoDB chat memory wipe kare.\n"
-        text += "• /addsticker <mood> - Kisi sticker/photo par reply karke usko mood (happy, angry, sleepy, sad, love) me save kare.\n"
-        text += "• /viewstickers - Saved custom stickers ki summary dekhe.\n"
-        text += "• /broadcast <msg> - Sabhi registered users ko ek sath notification/message bheje.\n"
+        text += "• `/admin` - Admin control panel open kare.\n"
+        text += "• `/clearchat <id>` - Kisi specific user ya group ki MongoDB chat memory wipe kare.\n"
+        text += "• `/addsticker <mood>` - Kisi sticker/photo par reply karke usko mood (`happy`, `angry`, `sleepy`, `sad`, `love`) me save kare.\n"
+        text += "• `/viewstickers` - Saved custom stickers ki summary dekhe.\n"
+        text += "• `/broadcast <msg>` - Sabhi registered users ko ek sath notification/message bheje.\n"
     
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -602,8 +600,7 @@ async def on_gender_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     uid = q.from_user.id
     
     db.update(uid, gender=gender)
-
-await store.save_profile(uid, {"gender": gender, "username": q.from_user.username, "name": q.from_user.first_name})
+    await store.save_profile(uid, {"gender": gender, "username": q.from_user.username, "name": q.from_user.first_name})
     
     try:
         await q.edit_message_reply_markup(reply_markup=None)
@@ -673,5 +670,5 @@ def build_app() -> Application:
     
     return app
 
-if name == "main":
+if __name__ == "__main__":
     build_app().run_polling(allowed_updates=Update.ALL_TYPES)
