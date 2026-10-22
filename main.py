@@ -199,7 +199,6 @@ NAME_SAVED = [
     "{n} hmm... theek hai pasand aaya sale 😏💖",
 ]
 
-# Expanded stopwords to prevent casual words like "ky", "hello", etc. from being saved as names
 NAME_STOPWORDS = {
     "hi", "hii", "hiii", "hello", "hey", "heyy", "haan", "han", "ha", "nahi", "nhi", "no", "yes", "ok",
     "okay", "kya", "ky", "kyu", "kyun", "kuch", "bol", "bata", "batao", "btao", "tum", "tu", "aap", "mai",
@@ -208,7 +207,7 @@ NAME_STOPWORDS = {
     "bas", "sona", "babu", "jan", "tera", "teri", "tumhara", "tumhari", "pehle", "abhi", "wapas", "kya hai",
 }
 
-_NAME_OK = re.compile(r"^[^\W\d_]{2,15}$", re.UNICODE)  # strict single-word check (2-15 letters)
+_NAME_OK = re.compile(r"^[^\W\d_]{2,15}$", re.UNICODE)
 _EXPLICIT_NAME_PATTERNS = [
     re.compile(r"^(?:mera|meri)\s+(?:naam|name|nam)\s+(?:hai\s+)?([^\W\d_]{2,15})$", re.I),
     re.compile(r"^(?:my\s+name\s+is|my\s+name's|call\s+me|name\s+is)\s+([^\W\d_]{2,15})$", re.I),
@@ -238,7 +237,6 @@ def extract_name(text: str, awaiting: bool = False) -> Optional[str]:
             name = _valid_name(m.group(1))
             if name:
                 return name
-    # If awaiting explicitly, validate single clean word
     if awaiting and len(t.split()) == 1:
         return _valid_name(t)
     return None
@@ -335,7 +333,7 @@ class DB:
                 "AND next_nudge_at <= ?",
                 (now,),
             ).fetchall()
-                """
+      """
 Maya Telegram bot - Part 2
 """
 def mongo_uris_from_env() -> list:
@@ -477,6 +475,17 @@ def gender_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("Boy 👦", callback_data="g:boy"),
                 InlineKeyboardButton("Girl 👧", callback_data="g:girl"),
+            ]
+        ]
+    )
+
+
+def confirm_gender_keyboard(gender: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ OK (Confirm)", callback_data=f"g:confirm:{gender}"),
+                InlineKeyboardButton("❌ Cancel", callback_data="g:cancel"),
             ]
         ]
     )
@@ -753,7 +762,7 @@ async def remember_name(app: Application, uid: int, name: str) -> None:
         if not await store.save(uid, {"chosen_name": name}):
             app.bot_data.setdefault("synced", set()).discard(uid)
             app.bot_data.setdefault("retry_at", {}).pop(uid, None)
-                """
+"""
 Maya Telegram bot - Part 3
 """
 async def process_message(app: Application, chat_id: int, uid: int, text: str) -> None:
@@ -904,32 +913,56 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
         return
 
-    gender = q.data.split(":", 1)[1] if ":" in q.data else ""
-    if gender not in ("boy", "girl"):
+    data = q.data
+
+    # Step 1: User clicked Boy or Girl -> Ask for OK / Cancel Confirmation
+    if data in ("g:boy", "g:girl"):
+        selected_gender = "boy" if data == "g:boy" else "girl"
+        confirm_text = f"Tune '{selected_gender.upper()}' select kiya hai. Pakka na? 🥺 Ise baad me change nahi kar payega!"
+        try:
+            await q.edit_message_text(text=confirm_text, reply_markup=confirm_gender_keyboard(selected_gender))
+        except BadRequest:
+            await q.message.reply_text(text=confirm_text, reply_markup=confirm_gender_keyboard(selected_gender))
+        await q.answer()
         return
 
-    alert_msg = f"Selected: {gender.upper()} 👦👧\n⚠️ Confirm! Aap ise aage kabhi change nahi kar payenge."
-    await q.answer(text=alert_msg, show_alert=True)
+    # Step 2: User clicked Cancel -> Default back to gender selection
+    if data == "g:cancel":
+        try:
+            await q.edit_message_text(text="Chal koi na, fir se select kar na 😒👇", reply_markup=gender_keyboard())
+        except BadRequest:
+            await q.message.reply_text(text="Chal koi na, fir se select kar na 😒👇", reply_markup=gender_keyboard())
+        await q.answer(text="Cancelled!")
+        return
 
-    now = time.time()
-    db.update(uid, gender=gender, awaiting_name=0 if row["chosen_name"] else 1)
+    # Step 3: User clicked OK (Confirm) -> Save permanently
+    if data.startswith("g:confirm:"):
+        gender = data.split(":", 2)[2]
+        if gender not in ("boy", "girl"):
+            return
 
-    store: Optional[ProfileStore] = app.bot_data.get("profiles")
-    if store and store.enabled:
-        ok = await store.save(uid, {"gender": gender})
-        if ok:
-            app.bot_data.setdefault("synced", set()).add(uid)
+        alert_msg = f"Confirmed: {gender.upper()} 👦👧\n⚠️ Ab ye change nahi hoga!"
+        await q.answer(text=alert_msg, show_alert=True)
 
-    try:
-        await q.edit_message_reply_markup(reply_markup=None)
-    except BadRequest:
-        pass
+        now = time.time()
+        db.update(uid, gender=gender, awaiting_name=0 if row["chosen_name"] else 1)
 
-    chat_id = q.message.chat_id if q.message else uid
-    hello = random.choice(FIRST_HELLO[gender])
-    db.add_message(uid, "model", hello)
-    await say(app, chat_id, hello)
-    schedule_nudge(db, uid, now)
+        store: Optional[ProfileStore] = app.bot_data.get("profiles")
+        if store and store.enabled:
+            ok = await store.save(uid, {"gender": gender})
+            if ok:
+                app.bot_data.setdefault("synced", set()).add(uid)
+
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except BadRequest:
+            pass
+
+        chat_id = q.message.chat_id if q.message else uid
+        hello = random.choice(FIRST_HELLO[gender])
+        db.add_message(uid, "model", hello)
+        await say(app, chat_id, hello)
+        schedule_nudge(db, uid, now)
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -985,7 +1018,6 @@ async def scan_nudges(app: Application, now: Optional[float] = None) -> None:
     now = now if now is not None else time.time()
     for row in db.due_nudges(now):
         uid = row["user_id"]
-        # Skip if gender is not selected yet
         if not row["gender"]:
             continue
         gender = row["gender"] or "boy"
@@ -1095,7 +1127,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", on_start, filters=private))
     app.add_handler(CommandHandler("about", on_about, filters=private))
     app.add_handler(CommandHandler("reset", on_reset, filters=private))
-    app.add_handler(CallbackQueryHandler(on_gender, pattern=r"^g:(boy|girl)$"))
+    app.add_handler(CallbackQueryHandler(on_gender, pattern=r"^g:(boy|girl|confirm:(boy|girl)|cancel)$"))
     app.add_handler(MessageHandler(private & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(private & ~filters.TEXT & ~filters.COMMAND, on_other))
     app.add_error_handler(on_error)
