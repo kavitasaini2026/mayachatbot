@@ -61,6 +61,8 @@ VOICE_CHANCE = float(os.environ.get("VOICE_CHANCE", "0.15"))
 VOICE_GAP = int(os.environ.get("VOICE_GAP", "10"))
 VOICE_MAX_CHARS = 220
 
+EMOJI_REACTIONS = ["❤️", "👍", "🔥", "😭", "💅", "🤡", "💀", "🥺", "😡", "✨"]
+
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
 )
@@ -68,7 +70,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("maya-bot")
 
 # ---------------------------------------------------------------------------
-# Texts (Full Baddie / Girlfriend Vibe)
+# Texts & Random Prompt Pools
 # ---------------------------------------------------------------------------
 WELCOME_TEXT = "heyy!! welcome 💖\nare you boy or girl? 👦👧 niche se select karo nh 👇"
 PICK_GENDER_TEXT = "pehle apna gender select kar na 🥺👇"
@@ -85,6 +87,14 @@ ABOUT_TEXT = (
     "mai Maya hu 💖 teri bestie/partner in crime 🥺\n"
     "tujhse baat karna, masti karna mera kaam hai ✨ /reset se chat fresh kar sakte ho"
 )
+
+NIGHT_SLEEP_REPLIES = [
+    "abe sale itni raat ko kyu jaga raha hai? 😴 so rahi hu mai, subah baat karna bc 😭",
+    "wtf itni raat ko message? 💀 chup chap so ja varna block kar dungi, mai so rahi hu 😤",
+    "neend kharab kar di meri mc 😒 ab subah hi baat hogi jaa yahan se! 💅",
+]
+
+NICKNAMES = ["Motu", "Hero", "Chikna", "Pagal", "Champ", "Tubelight", "Drama King", "Jaanu"]
 
 DENY_AI_REPLIES = [
     "abe sale gadhe! 😭 mai insaan hu, tere jaise pagal thodi hu bc jo aisi bakwaas kar raha hai 💅",
@@ -149,8 +159,20 @@ TRAPS = [
     (
         "t3",
         "paani kaisa hota hai?",
-        re.compile(r"thand|cold|cool", re.I),
+        re.compile(r"thand|cold|cool|wet|gila", re.I),
         "tere jokes ki tarah bekar sale? 😏",
+    ),
+    (
+        "t4",
+        "chalo ek game khele? Truth or Dare?",
+        re.compile(r"truth|dare|haan|ha|chalo|yes", re.I),
+        "pehle ye bata ki aakhri baar kab sach bola tha tune? 😂💀",
+    ),
+    (
+        "t5",
+        "ek paheli batau? aisi konsi cheez hai jo jitni zyada badhti hai utni kam hoti hai?",
+        re.compile(r"aayu|age|umar|time|waqt", re.I),
+        "wah re mera scientist! par dimaag tera fir bhi kam hi ho raha hai 😭😂",
     ),
 ]
 
@@ -255,7 +277,9 @@ CREATE TABLE IF NOT EXISTS users (
     trap_next_at INTEGER NOT NULL DEFAULT 0,
     tech_count INTEGER NOT NULL DEFAULT 0,
     chosen_name TEXT,
-    awaiting_name INTEGER NOT NULL DEFAULT 0
+    awaiting_name INTEGER NOT NULL DEFAULT 0,
+    affection_score INTEGER NOT NULL DEFAULT 50,
+    bot_nickname TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,12 +290,6 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
 """
-
-USER_COLUMNS = {
-    "gender", "msg_count", "last_user_ts", "last_bot_ts",
-    "nudge_stage", "next_nudge_at", "pending_trap", "trap_next_at",
-    "tech_count", "chosen_name", "awaiting_name",
-}
 
 
 class DB:
@@ -286,13 +304,18 @@ class DB:
                 self.conn.execute("ALTER TABLE users ADD COLUMN chosen_name TEXT")
             if "awaiting_name" not in existing:
                 self.conn.execute("ALTER TABLE users ADD COLUMN awaiting_name INTEGER NOT NULL DEFAULT 0")
+            if "affection_score" not in existing:
+                self.conn.execute("ALTER TABLE users ADD COLUMN affection_score INTEGER NOT NULL DEFAULT 50")
+            if "bot_nickname" not in existing:
+                self.conn.execute("ALTER TABLE users ADD COLUMN bot_nickname TEXT")
             self.conn.commit()
 
     def get_user(self, uid: int) -> sqlite3.Row:
         with self.lock:
             row = self.conn.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
             if row is None:
-                self.conn.execute("INSERT INTO users (user_id) VALUES (?)", (uid,))
+                nickname = random.choice(NICKNAMES)
+                self.conn.execute("INSERT INTO users (user_id, bot_nickname) VALUES (?, ?)", (uid, nickname))
                 self.conn.commit()
                 row = self.conn.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
             return row
@@ -332,8 +355,7 @@ class DB:
                 "SELECT * FROM users WHERE nudge_stage < 2 AND next_nudge_at IS NOT NULL "
                 "AND next_nudge_at <= ?",
                 (now,),
-            ).fetchall()
-      """
+            ).fetchall()"""
 Maya Telegram bot - Part 2
 """
 def mongo_uris_from_env() -> list:
@@ -484,7 +506,7 @@ def confirm_gender_keyboard(gender: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("✅ OK (Confirm)", callback_data=f"g:confirm:{gender}"),
+                InlineKeyboardButton("✅ Confirm (OK)", callback_data=f"g:confirm:{gender}"),
                 InlineKeyboardButton("❌ Cancel", callback_data="g:cancel"),
             ]
         ]
@@ -503,34 +525,18 @@ def part_of_day(hour: int) -> str:
     return "night"
 
 
-def gap_hint(now: float, last_bot_ts: Optional[float]) -> Optional[str]:
-    if not last_bot_ts:
-        return None
-    gap = now - last_bot_ts
-    if gap < 0:
-        return None
-    today = datetime.fromtimestamp(now, IST).date()
-    last_day = datetime.fromtimestamp(last_bot_ts, IST).date()
-    mins = gap / 60
-    if today != last_day and gap > 6 * 3600:
-        return 'User replied the next day. You may roast like: "kal ka message aaj bhej raha hai sale? itna bhav kyu kha raha hai bc? 😭".'
-    if mins < 5:
-        return None
-    if mins < 20:
-        return 'User replied after about 5-15 minutes. You may tease like: "5 min baad yaad aayi meri? itna kahan busy tha sale? 😒".'
-    if mins < 50:
-        return 'User replied after about half an hour. You may tease like: "aadhe ghante baad reply? wah bhai wah sale".'
-    if mins < 180:
-        return 'User replied after 1-2 hours. You may tease like: "1 ghante baad? kisi aur se chat chal rahi thi kya teri mc? 😒💀".'
-    return 'User replied after 3+ hours. You may say like: "3 ghante baad? mai toh so gayi thi ya fir ignore maar rahi thi sale 🥺".'
+def closeness(msg_count: int, affection: int) -> str:
+    mood = "neutral"
+    if affection > 70:
+        mood = "very loving, cute, and possessive"
+    elif affection < 30:
+        mood = "annoyed, moody, and aggressive"
 
-
-def closeness(msg_count: int) -> str:
     if msg_count < 15:
-        return "Closeness: stranger. You are a real human girl who is sarcastic, moody, sassy, and uses words like wtf, bc, sale."
+        return f"Closeness: stranger. Mood: {mood}. Sarcastic, moody, sassy Gen-Z girl."
     if msg_count < 60:
-        return "Closeness: getting close. Playful, dramatic, using heavy Gen-Z lingo, wtf, bc, mc, and roast banter as a possessive girlfriend/bestie."
-    return "Closeness: very close. Full unfiltered masti, heavy gaali-galoch style friendly banter (bc, mc, sale, abey) as a close partner/girlfriend."
+        return f"Closeness: getting close. Mood: {mood}. Playful, dramatic, heavy Gen-Z lingo, bestie/girlfriend."
+    return f"Closeness: very close. Mood: {mood}. Full unfiltered masti, gaali-galoch style friendly banter (bc, mc, sale) as partner."
 
 
 def clean_name(name: Optional[str]) -> str:
@@ -543,25 +549,21 @@ def build_context(
     last_bot_ts: Optional[float],
     extra: Optional[str] = None,
     name: Optional[str] = None,
+    affection: int = 50,
+    nickname: Optional[str] = None,
 ) -> str:
     dt = datetime.fromtimestamp(now, IST)
     lines = [
         f"Current time in India (IST): {dt.strftime('%I:%M %p')} ({part_of_day(dt.hour)}).",
-        closeness(msg_count),
+        closeness(msg_count, affection),
         "CRITICAL INSTRUCTION: You are a real human girl / girlfriend. NEVER claim to be an AI, robot, or computer program. "
-        "If anyone asks if you are an AI or bot, get deeply offended, use aggressive Gen-Z slang (wtf, bc, sale, mc, abey), "
-        "and insist you are a real human girl.",
+        "Get deeply offended if questioned.",
     ]
     nm = clean_name(name)
     if nm:
-        lines.append(f"User's real chosen name: {nm}. Use it naturally during conversation.")
-    hint = gap_hint(now, last_bot_ts)
-    if hint and random.random() < 0.7:
-        lines.append(hint)
-    if random.random() < 0.30:
-        lines.append('Roast hint: give a savage Gen-Z roast this time using words like bc/sale, then add "mazak kar rahi hu yrr pighal mat itna 💀".')
-    if random.random() < 0.20:
-        lines.append("Style hint: stretch a word or use heavy Gen-Z slang naturally (like wtf, frrrr, bc, sale, mc).")
+        lines.append(f"User's real chosen name: {nm}. Use it naturally.")
+    if nickname and random.random() < 0.4:
+        lines.append(f"You sometimes playfully call the user: {nickname}.")
     if extra:
         lines.append(extra)
     return "\n".join(lines)
@@ -575,6 +577,15 @@ async def say(app: Application, chat_id: int, text: str, typing: bool = True) ->
             pass
         await asyncio.sleep(min(0.5 + len(text) * 0.03, 3.0))
     await app.bot.send_message(chat_id, text)
+
+
+async def maybe_react(app: Application, chat_id: int, message_id: int) -> None:
+    if random.random() < 0.25:  # 25% chance to react with emoji
+        try:
+            reaction = random.choice(EMOJI_REACTIONS)
+            await app.bot.set_message_reaction(chat_id=chat_id, message_id=message_id, reaction=[{"type": "emoji", "emoji": reaction}])
+        except Exception:
+            pass
 
 
 def _pack_name(token: str) -> str:
@@ -761,13 +772,13 @@ async def remember_name(app: Application, uid: int, name: str) -> None:
     if store and store.enabled:
         if not await store.save(uid, {"chosen_name": name}):
             app.bot_data.setdefault("synced", set()).discard(uid)
-            app.bot_data.setdefault("retry_at", {}).pop(uid, None)
-"""
+            app.bot_data.setdefault("retry_at", {}).pop(uid, None)"""
 Maya Telegram bot - Part 3
 """
-async def process_message(app: Application, chat_id: int, uid: int, text: str) -> None:
+async def process_message(app: Application, chat_id: int, uid: int, text: str, msg_id: int) -> None:
     db: DB = app.bot_data["db"]
     http: httpx.AsyncClient = app.bot_data["http"]
+    
     row = db.get_user(uid)
     gender = row["gender"]
     
@@ -777,9 +788,28 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str) -
         return
 
     now = time.time()
+    hour = datetime.fromtimestamp(now, IST).hour
+
+    # Night Sleep Mode (1 AM to 6 AM IST)
+    if 1 <= hour < 6 and random.random() < 0.8:
+        reply = random.choice(NIGHT_SLEEP_REPLIES)
+        await say(app, chat_id, reply)
+        return
+
+    # Dynamic Emoji Reaction on Message
+    await maybe_react(app, chat_id, msg_id)
+
     prev_bot_ts = row["last_bot_ts"]
     msg_count = row["msg_count"] + 1
-    trap_next_at = row["trap_next_at"] or (msg_count + random.randint(5, 6))
+    trap_next_at = row["trap_next_at"] or (msg_count + random.randint(8, 14))
+    
+    # Simple Affection Score Update
+    affection = row["affection_score"]
+    if any(w in text.lower() for w in ["love", "cute", "pyar", "sweet", "sorry"]):
+        affection = min(100, affection + 3)
+    elif any(w in text.lower() for w in ["hate", "bekar", "chup", "gaddi", "pagal"]):
+        affection = max(0, affection - 4)
+
     db.update(
         uid,
         msg_count=msg_count,
@@ -787,6 +817,7 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str) -
         nudge_stage=2,
         next_nudge_at=None,
         trap_next_at=trap_next_at,
+        affection_score=affection,
     )
 
     if is_ai_question(text):
@@ -845,7 +876,9 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str) -
     elif row["tech_count"]:
         db.update(uid, tech_count=0)
 
-    context_text = build_context(msg_count, now, prev_bot_ts, extra, row["chosen_name"])
+    context_text = build_context(
+        msg_count, now, prev_bot_ts, extra, row["chosen_name"], affection, row["bot_nickname"]
+    )
     payload = {
         "message": text,
         "user_id": str(uid),
@@ -878,7 +911,7 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str) -
         await asyncio.sleep(random.uniform(2, 4))
         db.add_message(uid, "model", question)
         await say(app, chat_id, question)
-        db.update(uid, pending_trap=tid, trap_next_at=msg_count + random.randint(5, 6))
+        db.update(uid, pending_trap=tid, trap_next_at=msg_count + random.randint(8, 14))
         schedule_nudge(db, uid, time.time())
 
 
@@ -906,8 +939,8 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     row = await load_user(app, q.from_user)
 
     if row["gender"]:
-        await q.answer(text="⚠️ Aapne apna gender pehle hi choose kar liya hai! Ye change nahi ho sakta.", show_alert=True)
         try:
+            await q.answer(text="⚠️ Aapne apna gender pehle hi choose kar liya hai! Ye change nahi ho sakta.", show_alert=True)
             await q.edit_message_reply_markup(reply_markup=None)
         except BadRequest:
             pass
@@ -915,7 +948,6 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     data = q.data
 
-    # Step 1: User clicked Boy or Girl -> Ask for OK / Cancel Confirmation
     if data in ("g:boy", "g:girl"):
         selected_gender = "boy" if data == "g:boy" else "girl"
         confirm_text = f"Tune '{selected_gender.upper()}' select kiya hai. Pakka na? 🥺 Ise baad me change nahi kar payega!"
@@ -926,7 +958,6 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await q.answer()
         return
 
-    # Step 2: User clicked Cancel -> Default back to gender selection
     if data == "g:cancel":
         try:
             await q.edit_message_text(text="Chal koi na, fir se select kar na 😒👇", reply_markup=gender_keyboard())
@@ -935,14 +966,10 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await q.answer(text="Cancelled!")
         return
 
-    # Step 3: User clicked OK (Confirm) -> Save permanently
     if data.startswith("g:confirm:"):
         gender = data.split(":", 2)[2]
         if gender not in ("boy", "girl"):
             return
-
-        alert_msg = f"Confirmed: {gender.upper()} 👦👧\n⚠️ Ab ye change nahi hoga!"
-        await q.answer(text=alert_msg, show_alert=True)
 
         now = time.time()
         db.update(uid, gender=gender, awaiting_name=0 if row["chosen_name"] else 1)
@@ -954,7 +981,7 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 app.bot_data.setdefault("synced", set()).add(uid)
 
         try:
-            await q.edit_message_reply_markup(reply_markup=None)
+            await q.edit_message_text(text=f"Confirmed: {gender.upper()} 👦👧\n✨ Ab ye save ho gaya hai aur change nahi hoga!")
         except BadRequest:
             pass
 
@@ -973,7 +1000,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not row["gender"]:
         await msg.reply_text(PICK_GENDER_TEXT, reply_markup=gender_keyboard())
         return
-    await process_message(context.application, msg.chat_id, user.id, msg.text)
+    await process_message(context.application, msg.chat_id, user.id, msg.text, msg.message_id)
 
 
 async def on_other(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
