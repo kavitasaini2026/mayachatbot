@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: maya-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: API_URL
+        value: https://chikuu-bot-yi71.vercel.app
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: MONGO_URI_1
+        sync: false
+      - key: MONGO_URI_2
+        sync: false
+      - key: MONGO_URI_3
+        sync: false
+      - key: STICKER_PACK
+        sync: false
+      - key: STICKER_CHANCE
+        value: "0.6"
+      - key: VOICE_NAME
+        value: hi-IN-SwaraNeural
+      - key: VOICE_CHANCE
+        value: "0.15"
+      - key: VOICE_GAP
+        value: "10"
