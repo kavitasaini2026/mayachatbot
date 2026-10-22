@@ -429,7 +429,7 @@ async def process_chat(app: Application, update: Update, text: str, is_group: bo
 
     want_voice = VOICE_ENABLED and not is_group and len(reply) <= VOICE_MAX_CHARS and random.random() < VOICE_CHANCE
     await say_split(app, chat_id, reply, is_voice=want_voice)
-    """
+"""
 MAYA Telegram Bot - Part 3: Admin Panel, Handlers & Main App Runner
 """
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -469,6 +469,19 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         for mood, ids in stickers_data.items():
             text += f"• *{mood.title()}*: {len(ids)} stickers\n"
         await q.edit_message_text(text, parse_mode="Markdown")
+
+async def admin_view_stickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    store: ProfileStore = context.application.bot_data["profiles"]
+    stickers_data = await store.get_all_custom_stickers()
+    if not stickers_data:
+        await update.message.reply_text("Abhi tak koi custom stickers add nahi kiye gaye hain.")
+        return
+    text = "🖼️ *Custom Sticker Collections*\n━━━━━━━━━━━━━━━━━━━\n"
+    for mood, ids in stickers_data.items():
+        text += f"• *{mood.title()}*: {len(ids)} stickers\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def admin_clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
