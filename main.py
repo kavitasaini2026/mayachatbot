@@ -1,5 +1,5 @@
 """
-Maya Telegram bot (Render Web Service ready, MongoDB profile storage). - Part 1
+Maya Telegram bot - Part 1 (Natural Voice & Expression Engine)
 """
 import asyncio
 import base64
@@ -35,9 +35,6 @@ try:
 except ImportError:
     pass
 
-# ---------------------------------------------------------------------------
-# Config & Timezone
-# ---------------------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 API_URL = os.environ.get("API_URL", "https://chikuu-bot-yi71.vercel.app").rstrip("/")
 DB_PATH = os.environ.get("DB_PATH", "maya.db")
@@ -46,22 +43,23 @@ MONGO_DB_NAME = os.environ.get("MONGO_DB", "maya")
 IST = timezone(timedelta(hours=5, minutes=30))
 QUIET_START_HOUR = 0
 QUIET_END_HOUR = 8
-HISTORY_FOR_API = 12
+HISTORY_FOR_API = 15
 MONGO_RETRY_SECONDS = 120
 
 STICKER_PACK = os.environ.get("STICKER_PACK", "")
 STICKER_MOODS = ["happy", "angry", "sleepy", "sad", "love"]
-STICKER_EVERY = (3, 5)
-STICKER_CHANCE = float(os.environ.get("STICKER_CHANCE", "0.6"))
+STICKER_EVERY = (3, 6)
+STICKER_CHANCE = float(os.environ.get("STICKER_CHANCE", "0.45"))
 
 VOICE_ENABLED = os.environ.get("VOICE_ENABLED", "1") != "0"
 VOICE_ENGINE = os.environ.get("VOICE_ENGINE", "edge").strip().lower()
-VOICE_NAME = os.environ.get("VOICE_NAME", "hi-IN-SwaraNeural")
-VOICE_CHANCE = float(os.environ.get("VOICE_CHANCE", "0.15"))
-VOICE_GAP = int(os.environ.get("VOICE_GAP", "10"))
+# High Quality Natural Female Voice Choice (hi-IN-AnanyaNeural or hi-IN-KavyaNeural)
+VOICE_NAME = os.environ.get("VOICE_NAME", "hi-IN-AnanyaNeural")
+VOICE_CHANCE = float(os.environ.get("VOICE_CHANCE", "0.20"))
+VOICE_GAP = int(os.environ.get("VOICE_GAP", "8"))
 VOICE_MAX_CHARS = 220
 
-EMOJI_REACTIONS = ["❤️", "👍", "🔥", "😭", "💅", "🤡", "💀", "🥺", "😡", "✨"]
+EMOJI_REACTIONS = ["❤️", "👍", "🔥", "😭", "💅", "🤡", "💀", "🥺", "😡", "✨", "😳", "🥹"]
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
@@ -69,9 +67,6 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("maya-bot")
 
-# ---------------------------------------------------------------------------
-# Texts & Random Prompt Pools
-# ---------------------------------------------------------------------------
 WELCOME_TEXT = "heyy!! welcome 💖\nare you boy or girl? 👦👧 niche se select karo nh 👇"
 PICK_GENDER_TEXT = "pehle apna gender select kar na 🥺👇"
 
@@ -91,7 +86,6 @@ ABOUT_TEXT = (
 NIGHT_SLEEP_REPLIES = [
     "abe sale itni raat ko kyu jaga raha hai? 😴 so rahi hu mai, subah baat karna bc 😭",
     "wtf itni raat ko message? 💀 chup chap so ja varna block kar dungi, mai so rahi hu 😤",
-    "neend kharab kar di meri mc 😒 ab subah hi baat hogi jaa yahan se! 💅",
 ]
 
 NICKNAMES = ["Motu", "Hero", "Chikna", "Pagal", "Champ", "Tubelight", "Drama King", "Jaanu"]
@@ -100,28 +94,22 @@ DENY_AI_REPLIES = [
     "abe sale gadhe! 😭 mai insaan hu, tere jaise pagal thodi hu bc jo aisi bakwaas kar raha hai 💅",
     "wtf is wrong with you? 💀 khud pagalon jaisi baatein karta hai aur mujhe aisi cheezein bolta hai 😒",
     "mc shakal dekhi hai apni jo mujhe aisi faltu baatein bol raha hai? chup chap dhang se baat kar na 😡",
-    "abey oye! 🤬 agar agli baar aisi faltu baatein ki na toh block kar dungi, real hu mai 😤",
 ]
 
 FALLBACK_ERRORS = [
     "wtf yaar, dimag kharab mat kar mera 😭 kuch bhi bole jaa raha hai sale",
     "kya bakwaas hai ye mc, dimaag mat kha mera chup chap kuch dhang ka bol 💀",
-    "mera dhyan kahi aur tha yrr, tu aisi faltu baatein karega toh ignore hi karungi na 😒",
-    "mood off kar diya tu ne ekdum, baad me baat karugi jaa 💅",
 ]
 API_FAIL_REPLIES = [
     "mujhe abhi baat nahi karni tere se, dimag mat kha mera bc 😭",
-    "tera message dekh ke hi gussa aa jata hai sale, chup ho ja thodi der 💀",
 ]
 EMPTY_REPLIES = [
     "wtf kuch samajh nahi aaya kya bol gaya tu bc 😭",
-    "kya bakwaas hai ye, kuch aur bol na sale 💀",
 ]
 
 TECH_FORCED = [
     "kitni baar bolu bc ki mujhe ye coding-shoding me koi interest nahi hai! 😒 dimag mat kha mera",
     "wtf is wrong with you? har waqt padhai ya code 💀 jaa nikal pehli fursat me sale",
-    "abe gadhe, mai koi teacher ya notebook hu kya? 😭 in sab faltu cheezon ke liye mat bol mujhe mc",
 ]
 TECH_FOLLOWUP = "acha sun, dimag mat chala mera aur ye bata khana khaya ya nahi?"
 
@@ -129,13 +117,10 @@ NUDGE_1 = {
     "boy": [
         "arey seen karke bhaag gaya sale? 😒",
         "hello? zinda hai ya mar gaya bc? 💀",
-        "accha ignore? samajh gayi tera attitude mc 😏",
     ],
     "girl": [
         "arey chikni seen karke bhaag gayi? 😒",
         "hello? zinda hai kya bc? 💀",
-        "accha ignore? samajh gayi tera attitude 😏",
-        "chikni aaj chup hai, kahi uska wait toh nahi kar rahi jo seen tak nahi karta sale 💀",
     ],
 }
 NUDGE_2 = [
@@ -143,42 +128,6 @@ NUDGE_2 = [
     "ok bye, jaa rahi sone mood mat kharab kar mc 🥺",
 ]
 
-TRAPS = [
-    (
-        "t1",
-        "ek question puchu? 2+2 kitna hota hai?",
-        re.compile(r"\b4\b|char|four", re.I),
-        "toh phir usne tujhe kyu chhoda sale? 4 bhi nahi sambhal paya? 💀😭",
-    ),
-    (
-        "t2",
-        "din me kitne ghante hote hai?",
-        re.compile(r"\b24\b|chaubis|twenty", re.I),
-        "toh 24 ghante me ek ghanta bhi usko teri yaad nahi aayi bc? 💀",
-    ),
-    (
-        "t3",
-        "paani kaisa hota hai?",
-        re.compile(r"thand|cold|cool|wet|gila", re.I),
-        "tere jokes ki tarah bekar sale? 😏",
-    ),
-    (
-        "t4",
-        "chalo ek game khele? Truth or Dare?",
-        re.compile(r"truth|dare|haan|ha|chalo|yes", re.I),
-        "pehle ye bata ki aakhri baar kab sach bola tha tune? 😂💀",
-    ),
-    (
-        "t5",
-        "ek paheli batau? aisi konsi cheez hai jo jitni zyada badhti hai utni kam hoti hai?",
-        re.compile(r"aayu|age|umar|time|waqt", re.I),
-        "wah re mera scientist! par dimaag tera fir bhi kam hi ho raha hai 😭😂",
-    ),
-]
-
-# ---------------------------------------------------------------------------
-# Detectors & Strict Name Extractors
-# ---------------------------------------------------------------------------
 AI_QUESTION_RE = re.compile(
     r"(\b(tu|tum|tm|aap|you|u|r u|are you|are u)\s+(ek\s+|a\s+|an\s+)?"
     r"(real|bot|robot|ai|chatbot|human|insaan|asli|fake)\b)"
@@ -202,6 +151,8 @@ VOICE_REQUEST_RE = re.compile(
     re.I,
 )
 
+REMEMBER_RE = re.compile(r"(yaad\s+rakh|save\s+kar|bhulna\s+mat|important\s+hai|yeh\s+hai)", re.I)
+
 
 def is_voice_request(text: str) -> bool:
     return bool(VOICE_REQUEST_RE.search(text))
@@ -218,7 +169,6 @@ def is_tech_request(text: str) -> bool:
 NAME_SAVED = [
     "{n}? cute naam hai 🥺💖 ab se tujhe isi naam se bulaungi",
     "ohh {n} 😍 yaad rakh liya maine, bhoolungi nahi 🫶🏻",
-    "{n} hmm... theek hai pasand aaya sale 😏💖",
 ]
 
 NAME_STOPWORDS = {
@@ -273,8 +223,6 @@ CREATE TABLE IF NOT EXISTS users (
     last_bot_ts REAL,
     nudge_stage INTEGER NOT NULL DEFAULT 2,
     next_nudge_at REAL,
-    pending_trap TEXT,
-    trap_next_at INTEGER NOT NULL DEFAULT 0,
     tech_count INTEGER NOT NULL DEFAULT 0,
     chosen_name TEXT,
     awaiting_name INTEGER NOT NULL DEFAULT 0,
@@ -356,7 +304,7 @@ class DB:
                 "AND next_nudge_at <= ?",
                 (now,),
             ).fetchall()"""
-Maya Telegram bot - Part 2
+Maya Telegram bot - Part 2 (Persona & High Quality Voice Integration)
 """
 def mongo_uris_from_env() -> list:
     uris = []
@@ -368,7 +316,6 @@ def mongo_uris_from_env() -> list:
 
 
 class ProfileStore:
-    """Stores ONLY Gender and User-provided Real Name in MongoDB."""
     def __init__(self, uris: Optional[list] = None, collections: Optional[list] = None):
         self.clients: list = []
         self.cols: list = []
@@ -457,7 +404,6 @@ async def load_user(app: Application, tg_user) -> sqlite3.Row:
         return row
 
     if profile:
-        updates = {}
         if profile.get("gender") and not row["gender"]:
             db.update(uid, gender=profile["gender"])
             row = db.get_user(uid)
@@ -465,6 +411,18 @@ async def load_user(app: Application, tg_user) -> sqlite3.Row:
             db.update(uid, chosen_name=profile["chosen_name"], awaiting_name=0)
             row = db.get_user(uid)
         
+        recent_chats = profile.get("recent_chats", [])
+        if recent_chats:
+            with db.lock:
+                count_msgs = db.conn.execute("SELECT COUNT(*) FROM messages WHERE user_id=?", (uid,)).fetchone()[0]
+                if count_msgs == 0:
+                    for mc in recent_chats:
+                        db.conn.execute(
+                            "INSERT INTO messages (user_id, role, text, ts) VALUES (?, ?, ?, ?)",
+                            (uid, mc["role"], mc["text"], mc.get("ts", time.time()))
+                        )
+                    db.conn.commit()
+
         mongo_updates = {}
         if row["gender"] and not profile.get("gender"):
             mongo_updates["gender"] = row["gender"]
@@ -489,6 +447,15 @@ async def load_user(app: Application, tg_user) -> sqlite3.Row:
         else:
             retry_at[uid] = now + MONGO_RETRY_SECONDS
     return row
+
+
+async def sync_recent_chats_to_mongo(app: Application, uid: int) -> None:
+    store: Optional[ProfileStore] = app.bot_data.get("profiles")
+    if not store or not store.enabled:
+        return
+    db: DB = app.bot_data["db"]
+    history = db.history(uid, n=15)
+    await store.save(uid, {"recent_chats": history})
 
 
 def gender_keyboard() -> InlineKeyboardMarkup:
@@ -525,20 +492,6 @@ def part_of_day(hour: int) -> str:
     return "night"
 
 
-def closeness(msg_count: int, affection: int) -> str:
-    mood = "neutral"
-    if affection > 70:
-        mood = "very loving, cute, and possessive"
-    elif affection < 30:
-        mood = "annoyed, moody, and aggressive"
-
-    if msg_count < 15:
-        return f"Closeness: stranger. Mood: {mood}. Sarcastic, moody, sassy Gen-Z girl."
-    if msg_count < 60:
-        return f"Closeness: getting close. Mood: {mood}. Playful, dramatic, heavy Gen-Z lingo, bestie/girlfriend."
-    return f"Closeness: very close. Mood: {mood}. Full unfiltered masti, gaali-galoch style friendly banter (bc, mc, sale) as partner."
-
-
 def clean_name(name: Optional[str]) -> str:
     return re.sub(r"[^\w .'-]", "", name or "", flags=re.UNICODE).strip()[:30]
 
@@ -551,19 +504,40 @@ def build_context(
     name: Optional[str] = None,
     affection: int = 50,
     nickname: Optional[str] = None,
+    gender: str = "boy",
+    important_memory: Optional[str] = None,
 ) -> str:
     dt = datetime.fromtimestamp(now, IST)
+    
+    if gender == "boy":
+        gender_rule = (
+            "STRICT USER GENDER: The user is a BOY/MALE. Address him as a guy/boyfriend. "
+            "Use MASCULINE Hinglish phrasing ('tu kya kar raha hai', 'kahan gaya tha', 'sale'). "
+            "NEVER EVER use female words for him like 'chikni', 'kar rahi hai', 'pakdi gayi hai'."
+        )
+    else:
+        gender_rule = (
+            "STRICT USER GENDER: The user is a GIRL/FEMALE. Use feminine words like 'chikni', 'kar rahi hai'."
+        )
+
     lines = [
         f"Current time in India (IST): {dt.strftime('%I:%M %p')} ({part_of_day(dt.hour)}).",
-        closeness(msg_count, affection),
-        "CRITICAL INSTRUCTION: You are a real human girl / girlfriend. NEVER claim to be an AI, robot, or computer program. "
-        "Get deeply offended if questioned.",
+        gender_rule,
+        "ULTRA PERSONA & VOICE RULES:",
+        "1. You are Maya, a 100% REAL Indian girl (Gen-Z girlfriend/bestie vibe). Speak natural, expressive Hinglish.",
+        "2. SLANG USAGE: Use slangs like 'wtf', 'fuck', 'bc', 'frrr', 'sala', 'sale' ONLY when natural for the mood (e.g. anger, shock, teasing). Never spam them randomly.",
+        "3. NEVER reveal you are an AI, bot, or code. Act like a real person.",
+        "4. CONTEXT FOCUS: Pay close attention to chat history. Answer the user's last statement directly before steering the chat.",
+        "5. Keep responses short (1-2 lines max) so voice notes and text messages sound natural.",
     ]
+    
     nm = clean_name(name)
     if nm:
-        lines.append(f"User's real chosen name: {nm}. Use it naturally.")
-    if nickname and random.random() < 0.4:
-        lines.append(f"You sometimes playfully call the user: {nickname}.")
+        lines.append(f"User's real chosen name: {nm}.")
+    if nickname and random.random() < 0.3:
+        lines.append(f"Optional nickname: {nickname}.")
+    if important_memory:
+        lines.append(f"PERMANENT USER MEMORY: {important_memory}")
     if extra:
         lines.append(extra)
     return "\n".join(lines)
@@ -580,7 +554,7 @@ async def say(app: Application, chat_id: int, text: str, typing: bool = True) ->
 
 
 async def maybe_react(app: Application, chat_id: int, message_id: int) -> None:
-    if random.random() < 0.25:  # 25% chance to react with emoji
+    if random.random() < 0.25:
         try:
             reaction = random.choice(EMOJI_REACTIONS)
             await app.bot.set_message_reaction(chat_id=chat_id, message_id=message_id, reaction=[{"type": "emoji", "emoji": reaction}])
@@ -773,16 +747,18 @@ async def remember_name(app: Application, uid: int, name: str) -> None:
         if not await store.save(uid, {"chosen_name": name}):
             app.bot_data.setdefault("synced", set()).discard(uid)
             app.bot_data.setdefault("retry_at", {}).pop(uid, None)"""
-Maya Telegram bot - Part 3
+Maya Telegram bot - Part 3 (Execution Loop)
 """
 async def process_message(app: Application, chat_id: int, uid: int, text: str, msg_id: int) -> None:
     db: DB = app.bot_data["db"]
     http: httpx.AsyncClient = app.bot_data["http"]
     
+    class DummyUser:
+        def __init__(self, uid): self.id = uid
+    row = await load_user(app, DummyUser(uid))
     row = db.get_user(uid)
     gender = row["gender"]
     
-    # Strict Check: If gender is not selected, block normal chat and force gender selection
     if not gender:
         await app.bot.send_message(chat_id, PICK_GENDER_TEXT, reply_markup=gender_keyboard())
         return
@@ -790,20 +766,35 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str, m
     now = time.time()
     hour = datetime.fromtimestamp(now, IST).hour
 
-    # Night Sleep Mode (1 AM to 6 AM IST)
     if 1 <= hour < 6 and random.random() < 0.8:
         reply = random.choice(NIGHT_SLEEP_REPLIES)
         await say(app, chat_id, reply)
         return
 
-    # Dynamic Emoji Reaction on Message
     await maybe_react(app, chat_id, msg_id)
+
+    store: Optional[ProfileStore] = app.bot_data.get("profiles")
+    important_mem = None
+    if store and store.enabled:
+        prof, _, _ = await store.get(uid)
+        if prof:
+            important_mem = prof.get("important_memory")
+
+    if REMEMBER_RE.search(text):
+        cleaned_mem = REMEMBER_RE.sub("", text).strip(" :,-")
+        if cleaned_mem:
+            important_mem = cleaned_mem
+            if store and store.enabled:
+                await store.save(uid, {"important_memory": important_mem})
+            await say(app, chat_id, f"Theek hai yaad rakh liya! 🧠✨ '{important_mem}'")
+            db.add_message(uid, "user", text)
+            db.add_message(uid, "model", f"Yaad rakh liya: {important_mem}")
+            await sync_recent_chats_to_mongo(app, uid)
+            return
 
     prev_bot_ts = row["last_bot_ts"]
     msg_count = row["msg_count"] + 1
-    trap_next_at = row["trap_next_at"] or (msg_count + random.randint(8, 14))
     
-    # Simple Affection Score Update
     affection = row["affection_score"]
     if any(w in text.lower() for w in ["love", "cute", "pyar", "sweet", "sorry"]):
         affection = min(100, affection + 3)
@@ -816,7 +807,6 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str, m
         last_user_ts=now,
         nudge_stage=2,
         next_nudge_at=None,
-        trap_next_at=trap_next_at,
         affection_score=affection,
     )
 
@@ -826,6 +816,7 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str, m
         db.add_message(uid, "model", reply)
         await say(app, chat_id, reply)
         schedule_nudge(db, uid, time.time())
+        await sync_recent_chats_to_mongo(app, uid)
         return
 
     awaiting = bool(row["awaiting_name"])
@@ -840,18 +831,8 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str, m
         db.add_message(uid, "model", reply)
         await say(app, chat_id, reply)
         schedule_nudge(db, uid, time.time())
+        await sync_recent_chats_to_mongo(app, uid)
         return
-
-    pending = row["pending_trap"]
-    if pending:
-        db.update(uid, pending_trap=None)
-        for tid, _q, pattern, punch in TRAPS:
-            if tid == pending and pattern.search(text):
-                db.add_message(uid, "user", text)
-                db.add_message(uid, "model", punch)
-                await say(app, chat_id, punch)
-                schedule_nudge(db, uid, time.time())
-                return
 
     extra = None
     if is_tech_request(text):
@@ -866,18 +847,18 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str, m
             db.add_message(uid, "model", TECH_FOLLOWUP)
             await say(app, chat_id, TECH_FOLLOWUP)
             schedule_nudge(db, uid, time.time())
+            await sync_recent_chats_to_mongo(app, uid)
             return
         db.update(uid, tech_count=tech_count)
         extra = (
             "The user asked for technical, coding, or study help. Do NOT answer it. "
-            "Get annoyed, use heavy Gen-Z slang and abuses (like bc, sale, wtf), "
-            "make an excuse that you hate studies, and change the topic."
+            "Get annoyed, make an excuse that you hate studies, and change the topic."
         )
     elif row["tech_count"]:
         db.update(uid, tech_count=0)
 
     context_text = build_context(
-        msg_count, now, prev_bot_ts, extra, row["chosen_name"], affection, row["bot_nickname"]
+        msg_count, now, prev_bot_ts, extra, row["chosen_name"], affection, row["bot_nickname"], gender, important_mem
     )
     payload = {
         "message": text,
@@ -896,6 +877,9 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str, m
     reply = (data.get("reply") or "").strip() or random.choice(EMPTY_REPLIES)
     db.add_message(uid, "user", text)
     db.add_message(uid, "model", reply)
+    
+    await sync_recent_chats_to_mongo(app, uid)
+
     due = voice_due(app, uid)
     want_voice = VOICE_ENABLED and len(reply) <= VOICE_MAX_CHARS and (is_voice_request(text) or due)
     if want_voice and await send_voice_reply(app, chat_id, reply):
@@ -905,19 +889,7 @@ async def process_message(app: Application, chat_id: int, uid: int, text: str, m
     await maybe_sticker(app, chat_id, data.get("mood"), uid)
     schedule_nudge(db, uid, time.time())
 
-    fresh = db.get_user(uid)
-    if msg_count >= fresh["trap_next_at"] and not extra:
-        tid, question, _pattern, _punch = random.choice(TRAPS)
-        await asyncio.sleep(random.uniform(2, 4))
-        db.add_message(uid, "model", question)
-        await say(app, chat_id, question)
-        db.update(uid, pending_trap=tid, trap_next_at=msg_count + random.randint(8, 14))
-        schedule_nudge(db, uid, time.time())
 
-
-# ---------------------------------------------------------------------------
-# Telegram handlers
-# ---------------------------------------------------------------------------
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user, msg = update.effective_user, update.effective_message
     if not user or not msg:
@@ -940,7 +912,7 @@ async def on_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if row["gender"]:
         try:
-            await q.answer(text="⚠️ Aapne apna gender pehle hi choose kar liya hai! Ye change nahi ho sakta.", show_alert=True)
+            await q.answer(text="⚠️ Aapne apna gender pehle hi choose kar liya hai!", show_alert=True)
             await q.edit_message_reply_markup(reply_markup=None)
         except BadRequest:
             pass
@@ -1029,7 +1001,12 @@ async def on_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: DB = context.application.bot_data["db"]
     db.get_user(user.id)
     db.clear_history(user.id)
-    db.update(user.id, pending_trap=None, tech_count=0, nudge_stage=2, next_nudge_at=None)
+    db.update(user.id, tech_count=0, nudge_stage=2, next_nudge_at=None)
+    
+    store: Optional[ProfileStore] = context.application.bot_data.get("profiles")
+    if store and store.enabled:
+        await store.save(user.id, {"recent_chats": []})
+
     await msg.reply_text("done 🥹 chat fresh kar di, ab nayi shuruaat sale ✨")
 
 
@@ -1037,9 +1014,6 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.error("Unhandled error while handling update: %s", update, exc_info=context.error)
 
 
-# ---------------------------------------------------------------------------
-# Seen-nudge scanner (Strictly IST Hours Checked)
-# ---------------------------------------------------------------------------
 async def scan_nudges(app: Application, now: Optional[float] = None) -> None:
     db: DB = app.bot_data["db"]
     now = now if now is not None else time.time()
