@@ -1,3 +1,17 @@
+# Python cache & virtual environment
+pycache/
+*.py[cod]
+*$py.class
+venv/
+env/
+ENV/
+
+# Environment variables
 .env
+
+# Local SQLite database
 maya.db
-__pycache__/
+
+# Logs & temp files
+*.log
+.DS_Store
