@@ -34,7 +34,7 @@ except ImportError:
     pass
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-API_URL = os.environ.get("API_URL", "https://chikuu-bot-yi71.vercel.app").rstrip("/")
+API_URL = os.environ.get("API_URL", "https://mayaachatbot.vercel.app").rstrip("/")
 DB_PATH = os.environ.get("DB_PATH", "maya.db")
 
 ADMIN_ID = 8536757095
